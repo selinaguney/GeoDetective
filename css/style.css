@@ -1,0 +1,974 @@
+
+:root {
+    --background: #0b1522;
+    --panel: #172638;
+    --panel-light: #23374c;
+    --gold: #d7b779;
+    --text: #f5eee3;
+    --muted: #aab9ca;
+    --success: #70c6a5;
+    --danger: #ff9898;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    color: var(--text);
+    background: radial-gradient(
+        circle at top,
+        #1c3046,
+        var(--background) 65%
+    );
+    min-height: 100vh;
+}
+
+button {
+    cursor: pointer;
+    font: inherit;
+}
+
+button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.site-header {
+    padding: 22px 5%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #35475b;
+}
+
+.brand {
+    color: var(--gold);
+    font-weight: 800;
+    letter-spacing: 3px;
+}
+
+.subtitle,
+.eyebrow {
+    color: var(--gold);
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+
+main {
+    max-width: 1550px;
+    margin: auto;
+    padding: 35px 4%;
+}
+
+/* MAIN MENU */
+
+.intro {
+    text-align: center;
+    margin-bottom: 40px;
+}
+
+.intro h1 {
+    font-family: Georgia, serif;
+    font-size: clamp(28px, 4vw, 48px);
+}
+
+.intro > p:last-child {
+    color: var(--muted);
+}
+
+.case-list {
+    display: grid;
+    grid-template-columns:
+        repeat(auto-fit, minmax(210px, 1fr));
+    gap: 20px;
+}
+
+/* PLAYING CARDS */
+
+.case-wrapper {
+    height: 365px;
+    perspective: 1100px;
+}
+
+.flip-card {
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    outline-offset: 5px;
+}
+
+.flip-card-inner {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.65s;
+}
+
+.flip-card.flipped .flip-card-inner {
+    transform: rotateY(180deg);
+}
+
+.flip-card-front,
+.flip-card-back {
+    position: absolute;
+    inset: 0;
+    border: 1px solid #a18757;
+    border-radius: 13px;
+    overflow: hidden;
+    backface-visibility: hidden;
+    background: #192a3c;
+}
+
+.flip-card-front {
+    display: flex;
+    flex-direction: column;
+}
+
+.card-image {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.card-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.case-number {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    padding: 7px 10px;
+    background: #101a27dd;
+    color: var(--gold);
+    font-size: 11px;
+}
+
+.card-front-info {
+    text-align: center;
+    padding: 17px;
+}
+
+.card-front-info h3 {
+    margin: 0 0 10px;
+    font-family: Georgia, serif;
+}
+
+.card-front-info span {
+    font-size: 11px;
+    color: var(--gold);
+}
+
+.flip-card-back {
+    transform: rotateY(180deg);
+    padding: 19px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    text-align: center;
+}
+
+.back-icon {
+    font-size: 30px;
+}
+
+.flip-card-back h3 {
+    font-family: Georgia, serif;
+    margin: 5px;
+}
+
+.case-description {
+    font-size: 13px;
+    line-height: 1.55;
+    color: #d1dce7;
+}
+
+.case-details {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--gold);
+}
+
+.start-btn,
+.primary-btn {
+    background: var(--gold);
+    color: #122033;
+    border: 0;
+    border-radius: 7px;
+    padding: 12px;
+    font-weight: 800;
+    width: 100%;
+}
+
+.outline-btn {
+    background: transparent;
+    border: 1px solid var(--gold);
+    border-radius: 7px;
+    color: var(--gold);
+    padding: 11px 15px;
+}
+
+/* GAME TOPBAR */
+
+.game-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.game-topbar h2 {
+    margin: 0;
+    font-family: Georgia, serif;
+}
+
+.timer {
+    color: var(--muted);
+    white-space: nowrap;
+    font-size: 12px;
+}
+
+.timer strong {
+    color: var(--gold);
+    font-size: 23px;
+    margin-left: 8px;
+}
+
+.game-layout {
+    display: grid;
+    grid-template-columns:
+        minmax(0, 1.8fr)
+        minmax(340px, 1fr);
+    gap: 20px;
+}
+
+.map-area {
+    min-width: 0;
+}
+
+#map {
+    width: 100%;
+    height: 70vh;
+    min-height: 530px;
+    border: 2px solid #a18757;
+    border-radius: 12px;
+    background: #20354a;
+}
+
+.map-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 4px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+/* INVESTIGATION PANEL */
+
+.investigation-panel {
+    background: var(--panel);
+    border: 1px solid #846d4d;
+    border-radius: 12px;
+    padding: 22px;
+    min-width: 0;
+}
+
+.case-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--gold);
+    font-size: 11px;
+    letter-spacing: 1px;
+}
+
+.investigation-panel h3 {
+    font-family: Georgia, serif;
+    font-size: 24px;
+    margin: 15px 0;
+}
+
+.timeline {
+    display: flex;
+    gap: 5px;
+    margin: 20px 0;
+}
+
+.timeline-step {
+    flex: 1;
+    text-align: center;
+    padding-bottom: 10px;
+    border-bottom: 3px solid #44556a;
+    color: #8b9bad;
+    font-size: 12px;
+}
+
+.timeline-step.active {
+    border-color: var(--gold);
+    color: var(--gold);
+}
+
+.timeline-step.done {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+#mission-description {
+    color: #cfdae5;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* DOCUMENTS */
+
+#evidence-documents {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0;
+}
+
+.document-card {
+    background: #24374c;
+    border: 1px solid #52657b;
+    border-radius: 8px;
+    padding: 13px;
+}
+
+.document-card h4 {
+    color: var(--gold);
+    font-size: 13px;
+    margin: 0 0 9px;
+}
+
+.document-card p {
+    margin: 0;
+    color: #d6e0ea;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.objective {
+    background: #26394e;
+    border-left: 3px solid var(--gold);
+    padding: 15px;
+    margin: 18px 0;
+}
+
+.objective strong {
+    color: var(--gold);
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+.objective p {
+    margin-bottom: 0;
+    line-height: 1.6;
+    font-size: 14px;
+}
+
+.feedback {
+    min-height: 30px;
+    color: var(--gold);
+    font-size: 13px;
+    line-height: 1.5;
+    margin-top: 12px;
+}
+
+.feedback.error {
+    color: var(--danger);
+}
+
+/* GAME ACTIONS */
+
+.action-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.selection-info {
+    padding: 12px;
+    background: #23384d;
+    border-radius: 7px;
+    margin-bottom: 10px;
+    color: #e3ebf3;
+    font-size: 13px;
+}
+
+/* EVIDENCE BOARD */
+
+.board-title {
+    display: flex;
+    justify-content: space-between;
+    color: var(--gold);
+    font-size: 12px;
+    letter-spacing: 1px;
+    margin-top: 25px;
+    margin-bottom: 10px;
+}
+
+.progress-track {
+    height: 8px;
+    background: #3c4e62;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+#progress-fill {
+    width: 0%;
+    height: 100%;
+    background: var(--gold);
+    transition: width 0.3s;
+}
+
+#evidence-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.evidence-item {
+    padding: 10px;
+    background: #23374b;
+    border-radius: 6px;
+    color: #aebdd0;
+    font-size: 12px;
+}
+
+.evidence-item.done {
+    border-left: 3px solid var(--success);
+    color: #e4d4b6;
+}
+
+/* MAP MARKERS */
+
+.location-pin {
+    width: 26px;
+    height: 26px;
+    background: #d6b777;
+    border: 3px solid white;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    box-shadow: 0 2px 10px #0008;
+}
+
+.camera-pin {
+    width: 23px;
+    height: 23px;
+    background: #72b9de;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 10px #0008;
+}
+
+.leaflet-popup-content {
+    color: #1c2c3e;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 950px) {
+    .game-layout {
+        grid-template-columns: 1fr;
+    }
+
+    #map {
+        height: 55vh;
+        min-height: 380px;
+    }
+}
+
+@media (max-width: 550px) {
+    .case-list {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .case-wrapper {
+        height: 325px;
+    }
+
+    .flip-card-back {
+        padding: 10px;
+    }
+
+    .case-description {
+        font-size: 11px;
+    }
+
+    .card-front-info {
+        padding: 10px;
+    }
+
+    .card-front-info h3 {
+        font-size: 15px;
+    }
+
+    .game-topbar {
+        flex-wrap: wrap;
+    }
+
+    .game-topbar h2 {
+        order: 3;
+        width: 100%;
+        text-align: center;
+    }
+}
+
+
+/* =========================================
+   ANIMATED EVIDENCE BOARD
+========================================= */
+
+#evidence-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.evidence-item {
+    position: relative;
+    padding: 15px;
+    background: #1c2d40;
+    border: 1px solid #40546a;
+    border-left: 4px solid #52657b;
+    border-radius: 8px;
+    color: #8fa2b6;
+    font-size: 12px;
+    transition: all 0.3s ease;
+}
+
+.evidence-item.done {
+    background: linear-gradient(
+        135deg,
+        #233c3b,
+        #1a3039
+    );
+    border-color: #70c6a5;
+    color: #e6f5eb;
+}
+
+.evidence-item.new-evidence {
+    animation: evidenceReveal 0.65s ease-out both;
+}
+
+.evidence-item.done::after {
+    content: "✓ VERIFIED";
+    display: block;
+    margin-top: 8px;
+    color: #70c6a5;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+@keyframes evidenceReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(16px) scale(0.96);
+        box-shadow: 0 0 0 rgba(112, 198, 165, 0);
+    }
+
+    60% {
+        box-shadow: 0 0 22px rgba(112, 198, 165, 0.22);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        box-shadow: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .evidence-item.new-evidence {
+        animation: none;
+    }
+}
+
+
+/* CCTV SURVEILLANCE INTERFACE */
+
+.cctv-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.cctv-card {
+    overflow: hidden;
+    border: 1px solid #53677a;
+    border-radius: 9px;
+    background: #101b28;
+}
+
+.cctv-screen {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 145px;
+    padding: 12px;
+    color: #d6e4df;
+    background:
+        repeating-linear-gradient(
+            0deg,
+            transparent 0px,
+            transparent 3px,
+            rgba(255,255,255,0.035) 4px
+        ),
+        radial-gradient(
+            ellipse at center,
+            #344d50,
+            #0b171c 80%
+        );
+}
+
+.cctv-top,
+.cctv-bottom {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.cctv-rec {
+    color: #ff6969;
+    font-weight: bold;
+    animation: recBlink 1.2s infinite;
+}
+
+.cctv-symbol {
+    text-align: center;
+    font-size: 35px;
+    opacity: 0.35;
+    text-shadow: 0 0 15px #a9e5d4;
+}
+
+.cctv-footer {
+    padding: 9px 12px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: #a8bdc8;
+}
+
+@keyframes recBlink {
+    50% {
+        opacity: 0.2;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cctv-rec {
+        animation: none;
+    }
+}
+
+
+/* =========================================
+   ANIMATED CCTV SURVEILLANCE
+========================================= */
+
+.cctv-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.cctv-card {
+    min-width: 0;
+    border: 1px solid #53677a;
+    border-radius: 9px;
+    overflow: hidden;
+    background: #101b28;
+}
+
+.cctv-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
+.cctv-screen {
+    position: relative;
+    min-height: 165px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+    color: #d6e4df;
+    background:
+        repeating-linear-gradient(
+            0deg,
+            transparent 0px,
+            transparent 3px,
+            rgba(255,255,255,0.035) 4px
+        ),
+        linear-gradient(
+            180deg,
+            #263c43,
+            #101e25
+        );
+}
+
+.cctv-top,
+.cctv-bottom {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-family: monospace;
+    font-size: 11px;
+}
+
+.cctv-rec {
+    color: #ff6666;
+    font-weight: bold;
+    animation: recBlink 1.2s infinite;
+}
+
+.cctv-scene {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.cctv-building {
+    position: absolute;
+    bottom: 22%;
+    left: 12%;
+    width: 76%;
+    height: 54%;
+    background:
+        repeating-linear-gradient(
+            90deg,
+            #1b2d33 0px,
+            #1b2d33 25px,
+            #30454b 26px,
+            #30454b 34px
+        );
+    opacity: 0.5;
+}
+
+.cctv-scene::after {
+    content: "";
+    position: absolute;
+    bottom: 20%;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: #6b8588;
+}
+
+/* Walking silhouette */
+
+.cctv-person {
+    position: absolute;
+    z-index: 2;
+    left: 45%;
+    top: 48%;
+    width: 18px;
+    height: 44px;
+    filter: drop-shadow(0 0 5px #b8d4d0);
+}
+
+.person-head {
+    width: 12px;
+    height: 12px;
+    margin: auto;
+    border-radius: 50%;
+    background: #a5c3bf;
+}
+
+.person-body {
+    width: 12px;
+    height: 19px;
+    margin: 2px auto 0;
+    background: #a5c3bf;
+    border-radius: 3px;
+}
+
+.person-legs {
+    width: 12px;
+    height: 11px;
+    margin: 1px auto;
+    border-left: 4px solid #a5c3bf;
+    border-right: 4px solid #a5c3bf;
+}
+
+/* Movement animations */
+
+.move-east {
+    animation: walkEast 3s linear infinite;
+}
+
+.move-west {
+    animation: walkWest 3s linear infinite;
+}
+
+.move-north {
+    animation: walkNorth 3s linear infinite;
+}
+
+.move-south {
+    animation: walkSouth 3s linear infinite;
+}
+
+@keyframes walkEast {
+    from { transform: translateX(-65px); }
+    to { transform: translateX(65px); }
+}
+
+@keyframes walkWest {
+    from { transform: translateX(65px); }
+    to { transform: translateX(-65px); }
+}
+
+@keyframes walkNorth {
+    from { transform: translateY(30px) scale(1.15); }
+    to { transform: translateY(-25px) scale(0.65); }
+}
+
+@keyframes walkSouth {
+    from { transform: translateY(-25px) scale(0.65); }
+    to { transform: translateY(30px) scale(1.15); }
+}
+
+.cctv-footer {
+    padding: 9px 10px;
+    font-size: 9px;
+    letter-spacing: 0.6px;
+    color: #a8bdc8;
+}
+
+@keyframes recBlink {
+    50% { opacity: 0.2; }
+}
+
+@media (max-width: 600px) {
+    .cctv-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cctv-card:last-child:nth-child(odd) {
+        grid-column: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cctv-rec,
+    .cctv-person {
+        animation: none;
+    }
+}
+
+
+/* =========================================
+   CASE SOLVED — RESULTS SCREEN
+========================================= */
+
+.case-result {
+    margin-top: 18px;
+    padding: 20px;
+    background: linear-gradient(
+        145deg,
+        #142637,
+        #23374c
+    );
+    border: 1px solid #b59660;
+    border-radius: 12px;
+    animation: resultReveal 0.6s ease-out;
+}
+
+.result-heading {
+    color: #e5c68e;
+    text-align: center;
+    font-size: 15px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+}
+
+.result-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.result-stat {
+    min-width: 0;
+    padding: 16px 10px;
+    background: #172a3c;
+    border: 1px solid #3f556b;
+    border-radius: 9px;
+    text-align: center;
+}
+
+.result-stat span {
+    display: block;
+    color: #aab9ca;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+
+.result-stat strong {
+    display: block;
+    color: #e4c68f;
+    font-size: 20px;
+    overflow-wrap: anywhere;
+}
+
+.case-result .primary-btn {
+    margin-top: 5px;
+}
+
+@keyframes resultReveal {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .case-result {
+        animation: none;
+    }
+}
+
+
+.museum-camera-marker,
+.museum-entrance-marker {
+    background: transparent !important;
+    border: none !important;
+}
+.museum-camera-marker {
+    background: transparent !important;
+    border: none !important;
+    cursor: pointer !important;
+}
+
+.museum-camera-marker svg {
+    pointer-events: auto;
+}
