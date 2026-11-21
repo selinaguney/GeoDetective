@@ -1,7 +1,7 @@
 
 /* =========================================================
    GEODETECTIVE — CASE 3: THE COORDINATE CIPHER
-   Four missions / Shared 10-minute countdown
+   Four missions / Shared 6-minute countdown
 
    Dependencies:
    Leaflet, Turf.js, Chart.js, D3.js
