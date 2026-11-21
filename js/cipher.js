@@ -1,115 +1,168 @@
 
-/* =========================================
-   GEODETECTIVE — THE COORDINATE CIPHER
-   CHAPTER 3
-========================================= */
+/* =========================================================
+   GEODETECTIVE — CASE 3: THE COORDINATE CIPHER
+   Four missions / Shared 10-minute countdown
 
-window.turkeyBoundary = null;
+   Dependencies:
+   Leaflet, Turf.js, Chart.js, D3.js
 
-async function loadTurkeyBoundary() {
-    if (window.turkeyBoundary) return;
-
-    const response = await fetch("data/turkey-boundary.geojson");
-
-    if (!response.ok) {
-        throw new Error("Turkey GeoJSON could not be loaded.");
-    }
-
-    const geojson = await response.json();
-
-    if (geojson.type === "FeatureCollection") {
-        window.turkeyBoundary = turf.combine(geojson).features[0];
-    } else if (geojson.type === "Feature") {
-        window.turkeyBoundary = geojson;
-    } else {
-        window.turkeyBoundary = turf.feature(geojson);
-    }
-}
-
-
-/* =========================================
-   GAME STATE
-========================================= */
+   Required file:
+   data/turkey-boundary.geojson
+========================================================= */
 
 const cipherGame = {
     stage: 0,
     scenario: null,
     map: null,
     layer: null,
-    selectedLocation: null,
     distanceMission: null,
-    finished: true
+    overlayMission: null,
+    finalMission: null,
+    finished: true,
+    timedOut: false
 };
 
+let cipherTimerInterval = null;
+let cipherTimeLeft = 360;
+let cipherSession = 0;
+let cipherDeadline = 0;
 
-/* =========================================
-   RANDOM LOCATION GENERATION
-========================================= */
+window.turkeyBoundary = null;
 
-const CipherCase = (() => {
+/* =========================================================
+   GENERAL HELPERS
+========================================================= */
 
-    function toDMS(decimal, positive, negative) {
-        const direction = decimal >= 0 ? positive : negative;
-        const value = Math.abs(decimal);
+function cipherEl(id) {
+    return document.getElementById(id);
+}
 
-        const degrees = Math.floor(value);
-        const minutes = Math.floor((value - degrees) * 60);
-        const seconds = ((value - degrees) * 60 - minutes) * 60;
+function cipherSet(id, value) {
+    const element = cipherEl(id);
+    if (element) element.textContent = value;
+}
 
-        return `${degrees}° ${minutes}' ${seconds.toFixed(1)}" ${direction}`;
+function cipherHTML(id, html) {
+    const element = cipherEl(id);
+    if (element) element.innerHTML = html;
+}
+
+function cipherFeedback(message) {
+    cipherSet("feedback", message);
+}
+
+function cipherActive(stage) {
+    return (
+        !cipherGame.timedOut &&
+        !cipherGame.finished &&
+        cipherGame.stage === stage
+    );
+}
+
+function cipherRandom(min, max) {
+    return min + Math.random() * (max - min);
+}
+
+function cipherRound(value, decimals = 1) {
+    const factor = 10 ** decimals;
+    return Math.round(value * factor) / factor;
+}
+
+function cipherKm(a, b) {
+    const rad = Math.PI / 180;
+
+    const dLat = (b[0] - a[0]) * rad;
+    const dLon = (b[1] - a[1]) * rad;
+
+    const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(a[0] * rad) *
+        Math.cos(b[0] * rad) *
+        Math.sin(dLon / 2) ** 2;
+
+    return 6371 * 2 * Math.atan2(
+        Math.sqrt(h),
+        Math.sqrt(Math.max(0, 1 - h))
+    );
+}
+
+function cipherDestination(point, distance, bearing) {
+    const result = turf.destination(
+        turf.point([point[1], point[0]]),
+        distance,
+        bearing,
+        { units: "kilometers" }
+    );
+
+    return [
+        result.geometry.coordinates[1],
+        result.geometry.coordinates[0]
+    ];
+}
+
+function cipherInsideTurkey(point) {
+    if (!window.turkeyBoundary) return false;
+
+    return turf.booleanPointInPolygon(
+        turf.point([point[1], point[0]]),
+        window.turkeyBoundary
+    );
+}
+
+function cipherShuffle(array) {
+    const result = [...array];
+
+    for (let i = result.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+
+        [result[i], result[j]] = [
+            result[j],
+            result[i]
+        ];
     }
 
-    function isInsideTurkey(lat, lon) {
-        return turf.booleanPointInPolygon(
-            turf.point([lon, lat]),
-            window.turkeyBoundary
-        );
+    return result;
+}
+
+function cipherIcon(label, color = "#e2e8f0") {
+    return L.divIcon({
+        className: "cipher-custom-marker",
+        html: `
+            <div style="
+                width:34px;
+                height:34px;
+                border-radius:50%;
+                background:${color};
+                border:2px solid white;
+                color:#132238;
+                display:flex;
+                justify-content:center;
+                align-items:center;
+                font-weight:800;
+                font-size:14px;
+                box-shadow:0 3px 10px #0008;
+            ">${label}</div>
+        `,
+        iconSize: [38, 38],
+        iconAnchor: [19, 19]
+    });
+}
+
+function cipherMarker(point, label, color) {
+    return L.marker(point, {
+        icon: cipherIcon(label, color)
+    }).addTo(cipherGame.layer);
+}
+
+function cipherProgress(completed) {
+    cipherSet("progress-text", `${completed} / 4`);
+
+    const fill = cipherEl("progress-fill");
+
+    if (fill) {
+        fill.style.width = `${completed * 25}%`;
     }
 
-    function generateScenario() {
-        if (!window.turkeyBoundary) {
-            throw new Error("Turkey boundary data is not loaded.");
-        }
-
-        const bounds = {
-            minLat: 35.8,
-            maxLat: 42.2,
-            minLon: 25.6,
-            maxLon: 44.9
-        };
-
-        for (let attempt = 0; attempt < 10000; attempt++) {
-            const lat = bounds.minLat +
-                Math.random() * (bounds.maxLat - bounds.minLat);
-
-            const lon = bounds.minLon +
-                Math.random() * (bounds.maxLon - bounds.minLon);
-
-            if (isInsideTurkey(lat, lon)) {
-                return {
-                    correct: {
-                        name: "Hidden Location",
-                        point: [lat, lon]
-                    },
-                    latitudeDMS: toDMS(lat, "N", "S"),
-                    longitudeDMS: toDMS(lon, "E", "W")
-                };
-            }
-        }
-
-        throw new Error("Could not generate a location in Türkiye.");
-    }
-
-    return { generateScenario, isInsideTurkey };
-
-})();
-
-
-/* =========================================
-   COMMON UI HELPERS
-========================================= */
-
-function updateCipherTimeline(activeStage) {
     const labels = [
         "Coordinates",
         "Distance",
@@ -117,176 +170,279 @@ function updateCipherTimeline(activeStage) {
         "Final Cipher"
     ];
 
-    document.getElementById("timeline").innerHTML =
+    cipherHTML(
+        "timeline",
         labels.map((label, index) => {
-            const number = String(index + 1).padStart(2, "0");
-            const stage = index + 1;
+            let status = "";
 
-            let className = "timeline-step";
-            let symbol = "";
-
-            if (stage < activeStage) {
-                className += " completed";
-                symbol = " ✓";
-            } else if (stage === activeStage) {
-                className += " active";
+            if (index < completed) {
+                status = "completed";
+            } else if (index === completed) {
+                status = "active";
             }
 
             return `
-                <div class="${className}">
-                    ${number} — ${label}${symbol}
+                <div class="timeline-step ${status}">
+                    ${String(index + 1).padStart(2, "0")}
+                    — ${label}
+                    ${index < completed ? "✓" : ""}
                 </div>
             `;
-        }).join("");
-}
+        }).join("")
+    );
 
-function updateCipherEvidence(completed) {
-    const labels = [
-        "Coordinate clue",
-        "Distance analysis",
-        "Spatial overlay",
-        "Final location"
-    ];
-
-    document.getElementById("evidence-list").innerHTML =
+    cipherHTML(
+        "evidence-list",
         labels.map((label, index) => `
             <div class="evidence-item">
-                ${index < completed ? "✅" : "🔒"} ${label}
+                ${index < completed ? "✅" : "🔒"}
+                ${label}
             </div>
-        `).join("");
+        `).join("")
+    );
 }
 
-function makeCipherNumberIcon(number, color) {
-    return L.divIcon({
-        className: "",
-        html: `
-            <div style="
-                width:30px;
-                height:30px;
-                border-radius:50%;
-                background:${color};
-                border:2px solid #ffffff;
-                color:#142338;
-                font-size:15px;
-                font-weight:800;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                box-shadow:0 3px 10px rgba(0,0,0,.4);
-            ">${number}</div>
-        `,
-        iconSize: [34, 34],
-        iconAnchor: [17, 17]
-    });
+function cipherMissionInfo(stage, title, description, objective) {
+    cipherSet(
+        "stage-number",
+        `MISSION ${String(stage).padStart(2, "0")} / 04`
+    );
+
+    cipherSet("mission-title", title);
+    cipherSet("mission-description", description);
+    cipherSet("mission-objective", objective);
+
+    cipherFeedback("");
 }
 
+function cipherComplete(stage, message, nextFunction) {
+    cipherGame.finished = true;
 
-/* =========================================
-   START CHAPTER 3
-========================================= */
+    cipherProgress(stage);
+    cipherFeedback(message);
 
-async function startCipherInvestigation() {
-    await loadTurkeyBoundary();
+    if (stage === 4) {
+        stopCipherTimer();
+        return;
+    }
 
-    cipherGame.scenario = CipherCase.generateScenario();
-    cipherGame.stage = 1;
-    cipherGame.selectedLocation = null;
-    cipherGame.distanceMission = null;
-    cipherGame.finished = false;
-
-    document.getElementById("case-title").textContent =
-        "The Coordinate Cipher";
-
-    document.getElementById("case-district").textContent =
-        "TÜRKIYE";
-
-    document.getElementById("stage-number").textContent =
-        "MISSION 01 / 04";
-
-    document.getElementById("mission-title").textContent =
-        "The Hidden Coordinates";
-
-    document.getElementById("mission-description").textContent =
-        "A missing researcher left a secret location somewhere in Türkiye. Decode the coordinates to discover the first clue.";
-
-    document.getElementById("mission-objective").textContent =
-        "Convert the coordinates from DMS to decimal degrees. Enter both latitude and longitude to reveal the hidden location.";
-
-    document.getElementById("timer").textContent = "10:00";
-    document.getElementById("progress-text").textContent = "0 / 4";
-    document.getElementById("progress-fill").style.width = "0%";
-    document.getElementById("feedback").textContent = "";
-
-    updateCipherTimeline(1);
-    updateCipherEvidence(0);
-
-    const s = cipherGame.scenario;
-
-    document.getElementById("evidence-documents").innerHTML = `
-        <div class="document-card">
-            <h4>RECOVERED NOTE</h4>
-            <p>The researcher left these coordinates:</p>
-            <p><strong>Latitude:</strong> ${s.latitudeDMS}</p>
-            <p><strong>Longitude:</strong> ${s.longitudeDMS}</p>
+    cipherHTML("mission-actions", `
+        <div class="selection-info">
+            ✓ MISSION ${stage} COMPLETED
         </div>
 
-        <div class="document-card">
-            <h4>COORDINATE CONVERSION</h4>
-            <p>
-                Decimal Degrees =
-                Degrees + Minutes / 60 + Seconds / 3600
-            </p>
-            <p>North and East are positive.</p>
-            <p>Small rounding errors are accepted.</p>
-        </div>
-    `;
+        <p>${message}</p>
 
-    document.getElementById("mission-actions").innerHTML = `
-        <div class="cipher-coordinate-form">
+        <button
+            class="primary-btn"
+            id="cipher-next-mission"
+            type="button"
+            style="width:100%"
+        >
+            CONTINUE TO MISSION ${stage + 1}
+        </button>
+    `);
 
-            <div class="cipher-input-group">
-                <label for="cipher-lat">LATITUDE</label>
-                <input
-                    id="cipher-lat"
-                    type="text"
-                    inputmode="decimal"
-                    placeholder="e.g. 39.9208"
-                    autocomplete="off"
-                >
-            </div>
-
-            <div class="cipher-input-group">
-                <label for="cipher-lon">LONGITUDE</label>
-                <input
-                    id="cipher-lon"
-                    type="text"
-                    inputmode="decimal"
-                    placeholder="e.g. 32.8541"
-                    autocomplete="off"
-                >
-            </div>
-
-            <button
-                class="primary-btn cipher-verify-btn"
-                id="cipher-verify"
-                type="button"
-            >
-                VERIFY COORDINATES
-            </button>
-
-        </div>
-    `;
-
-    document.getElementById("cipher-verify")
-        .addEventListener("click", verifyCipherCoordinates);
-
-    initializeCipherMap();
+    cipherEl("cipher-next-mission")
+        .addEventListener("click", nextFunction);
 }
 
+/* =========================================================
+   TIMER
+========================================================= */
 
-/* =========================================
-   MAP
-========================================= */
+function updateCipherTimerDisplay() {
+    const minutes = Math.floor(cipherTimeLeft / 60);
+    const seconds = cipherTimeLeft % 60;
+
+    cipherSet(
+        "timer",
+        `${String(minutes).padStart(2, "0")}:` +
+        `${String(seconds).padStart(2, "0")}`
+    );
+}
+
+function stopCipherTimer() {
+    if (cipherTimerInterval !== null) {
+        clearInterval(cipherTimerInterval);
+        cipherTimerInterval = null;
+    }
+}
+
+function cipherTimeExpired() {
+    stopCipherTimer();
+
+    cipherGame.timedOut = true;
+    cipherGame.finished = true;
+
+    cipherFeedback(
+        "TIME'S UP! The investigation has failed."
+    );
+
+    cipherHTML("mission-actions", `
+        <div class="selection-info">
+            TIME'S UP — CASE FAILED
+        </div>
+
+        <p>
+            You ran out of time before solving
+            The Coordinate Cipher.
+        </p>
+
+        <button
+            class="primary-btn"
+            id="cipher-retry"
+            type="button"
+            style="width:100%"
+        >
+            RETRY INVESTIGATION
+        </button>
+    `);
+
+    cipherEl("cipher-retry").addEventListener(
+        "click",
+        startCipherInvestigation
+    );
+}
+
+function startCipherTimer() {
+    stopCipherTimer();
+
+    cipherTimeLeft = 360;
+    cipherDeadline = Date.now() + 360000;
+    cipherGame.timedOut = false;
+
+    updateCipherTimerDisplay();
+
+    const currentSession = cipherSession;
+
+    cipherTimerInterval = setInterval(() => {
+        if (currentSession !== cipherSession) {
+            stopCipherTimer();
+            return;
+        }
+
+        if (cipherGame.timedOut) {
+            stopCipherTimer();
+            return;
+        }
+
+        if (
+            cipherGame.stage === 4 &&
+            cipherGame.finished
+        ) {
+            stopCipherTimer();
+            return;
+        }
+
+        cipherTimeLeft = Math.max(
+            0,
+            Math.ceil(
+                (cipherDeadline - Date.now()) / 1000
+            )
+        );
+
+        updateCipherTimerDisplay();
+
+        if (cipherTimeLeft === 0) {
+            cipherTimeExpired();
+        }
+    }, 250);
+}
+
+/* =========================================================
+   TURKEY BOUNDARY
+========================================================= */
+
+async function loadTurkeyBoundary() {
+    if (window.turkeyBoundary) return;
+
+    const response = await fetch(
+        "data/turkey-boundary.geojson"
+    );
+
+    if (!response.ok) {
+        throw new Error(
+            "Could not load data/turkey-boundary.geojson"
+        );
+    }
+
+    const geojson = await response.json();
+
+    if (geojson.type === "FeatureCollection") {
+        if (!geojson.features.length) {
+            throw new Error("Turkey boundary is empty.");
+        }
+
+        window.turkeyBoundary =
+            turf.combine(geojson).features[0];
+
+    } else if (geojson.type === "Feature") {
+        window.turkeyBoundary = geojson;
+
+    } else {
+        window.turkeyBoundary = turf.feature(geojson);
+    }
+}
+
+function cipherDMS(value, positive, negative) {
+    const absolute = Math.abs(value);
+    const degrees = Math.floor(absolute);
+    const minutes = Math.floor(
+        (absolute - degrees) * 60
+    );
+
+    const seconds =
+        ((absolute - degrees) * 60 - minutes) * 60;
+
+    const direction =
+        value >= 0 ? positive : negative;
+
+    return (
+        `${degrees}° ${minutes}' ` +
+        `${seconds.toFixed(1)}" ${direction}`
+    );
+}
+
+function generateCipherCoordinates() {
+    for (let attempt = 0; attempt < 10000; attempt++) {
+        const lat = cipherRandom(35.8, 42.2);
+        const lon = cipherRandom(25.6, 44.9);
+
+        const point = [lat, lon];
+
+        if (cipherInsideTurkey(point)) {
+            const latitudeDMS = cipherDMS(
+                lat, "N", "S"
+            );
+
+            const longitudeDMS = cipherDMS(
+                lon, "E", "W"
+            );
+
+            return {
+                correct: { point },
+                latitudeDMS,
+                longitudeDMS
+            };
+        }
+    }
+
+    throw new Error(
+        "Could not generate a location inside Türkiye."
+    );
+}
+
+const CipherCase = {
+    generateScenario: generateCipherCoordinates,
+
+    isInsideTurkey: (lat, lon) =>
+        cipherInsideTurkey([lat, lon])
+};
+
+/* =========================================================
+   MAP INITIALIZATION
+========================================================= */
 
 function initializeCipherMap() {
     if (cipherGame.map) {
@@ -294,264 +450,352 @@ function initializeCipherMap() {
         cipherGame.map = null;
     }
 
-    if (
-        typeof detectiveMap !== "undefined" &&
-        detectiveMap
-    ) {
-        detectiveMap.remove();
-        detectiveMap = null;
+    const mapContainer = cipherEl("map");
+
+    if (!mapContainer) {
+        throw new Error(
+            "Map container was not found."
+        );
     }
 
-    if (
-        typeof museumGame !== "undefined" &&
-        museumGame.map
-    ) {
-        museumGame.map.remove();
-        museumGame.map = null;
+    if (mapContainer._leaflet_id) {
+        const previousMap =
+            window.map ||
+            window.detectiveMap ||
+            (
+                typeof museumGame !== "undefined"
+                    ? museumGame.map
+                    : null
+            );
+
+        if (
+            previousMap &&
+            typeof previousMap.remove === "function"
+        ) {
+            previousMap.remove();
+        }
+    }
+
+    if (mapContainer._leaflet_id) {
+        delete mapContainer._leaflet_id;
     }
 
     cipherGame.map = L.map("map", {
-        maxBounds: [
-            [35.0, 25.0],
-            [43.0, 46.0]
-        ],
-        maxBoundsViscosity: 1.0,
         minZoom: 5,
-        maxZoom: 19
-    }).setView([39.0, 35.0], 6);
+        maxZoom: 19,
+        maxBounds: [
+            [35, 25],
+            [43, 46]
+        ],
+        maxBoundsViscosity: 1
+    }).setView([39, 35], 6);
 
     L.tileLayer(
         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
-            attribution: "&copy; OpenStreetMap contributors",
-            maxZoom: 19,
-            noWrap: true
+            attribution:
+                "&copy; OpenStreetMap contributors",
+            maxZoom: 19
         }
     ).addTo(cipherGame.map);
 
-    cipherGame.layer = L.layerGroup().addTo(cipherGame.map);
+    cipherGame.layer = L.layerGroup()
+        .addTo(cipherGame.map);
 
     setTimeout(() => {
         if (cipherGame.map) {
             cipherGame.map.invalidateSize();
         }
-    }, 150);
+    }, 200);
 }
 
+/* =========================================================
+   START INVESTIGATION
+========================================================= */
 
-/* =========================================
-   DISTANCE CALCULATION
-========================================= */
+async function startCipherInvestigation() {
+    const session = ++cipherSession;
 
-function cipherDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const rad = Math.PI / 180;
-
-    const dLat = (lat2 - lat1) * rad;
-    const dLon = (lon2 - lon1) * rad;
-
-    const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(lat1 * rad) *
-        Math.cos(lat2 * rad) *
-        Math.sin(dLon / 2) ** 2;
-
-    return 2 * R * Math.atan2(
-        Math.sqrt(a),
-        Math.sqrt(Math.max(0, 1 - a))
-    );
-}
-
-
-/* =========================================
-   MISSION 1 — VERIFY COORDINATES
-========================================= */
-
-function verifyCipherCoordinates() {
-    if (cipherGame.finished || cipherGame.stage !== 1) return;
-
-    const latText = document.getElementById("cipher-lat")
-        .value.trim().replace(",", ".");
-
-    const lonText = document.getElementById("cipher-lon")
-        .value.trim().replace(",", ".");
-
-    const lat = Number(latText);
-    const lon = Number(lonText);
-
-    const feedback = document.getElementById("feedback");
-
-    if (
-        latText === "" ||
-        lonText === "" ||
-        !Number.isFinite(lat) ||
-        !Number.isFinite(lon) ||
-        lat < -90 || lat > 90 ||
-        lon < -180 || lon > 180
-    ) {
-        feedback.textContent =
-            "Please enter valid latitude and longitude values.";
-        return;
-    }
-
-    const target = cipherGame.scenario.correct.point;
-
-    const distance = cipherDistance(
-        lat, lon,
-        target[0], target[1]
-    );
-
-    if (distance > 150) {
-        feedback.textContent =
-            "Coordinates do not match. Check your conversion and try again.";
-        return;
-    }
+    stopCipherTimer();
 
     cipherGame.finished = true;
+    cipherGame.timedOut = false;
 
-    feedback.textContent =
-        "Coordinates accepted! Secret location identified.";
+    try {
+        await loadTurkeyBoundary();
+
+        if (session !== cipherSession) return;
+
+        if (cipherGame.distanceMission?.chart) {
+            cipherGame.distanceMission.chart.destroy();
+        }
+
+        cipherGame.scenario =
+            generateCipherCoordinates();
+
+        cipherGame.distanceMission = null;
+        cipherGame.overlayMission = null;
+        cipherGame.finalMission = null;
+
+        cipherGame.stage = 1;
+        cipherGame.finished = false;
+
+        cipherSet(
+            "case-title",
+            "The Coordinate Cipher"
+        );
+
+        cipherSet("case-district", "TÜRKIYE");
+
+        cipherMissionInfo(
+            1,
+            "The Hidden Coordinates",
+            "A missing researcher left secret coordinates somewhere in Türkiye.",
+            "Convert the DMS coordinates into decimal degrees."
+        );
+
+        cipherProgress(0);
+
+        const scenario = cipherGame.scenario;
+
+        cipherHTML("evidence-documents", `
+            <div class="document-card">
+                <h4>RECOVERED NOTE</h4>
+
+                <p>
+                    Latitude:
+                    <strong>
+                        ${scenario.latitudeDMS}
+                    </strong>
+                </p>
+
+                <p>
+                    Longitude:
+                    <strong>
+                        ${scenario.longitudeDMS}
+                    </strong>
+                </p>
+            </div>
+
+            <div class="document-card">
+                <h4>COORDINATE CONVERSION</h4>
+
+                <p>
+                    DD = Degrees + Minutes / 60
+                    + Seconds / 3600
+                </p>
+
+                <p>
+                    North and East are positive.
+                </p>
+            </div>
+        `);
+
+        cipherHTML("mission-actions", `
+            <div class="cipher-coordinate-form">
+                <div class="cipher-input-group">
+                    <label for="cipher-lat">
+                        LATITUDE
+                    </label>
+
+                    <input
+                        id="cipher-lat"
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="e.g. 39.9208"
+                    >
+                </div>
+
+                <div class="cipher-input-group">
+                    <label for="cipher-lon">
+                        LONGITUDE
+                    </label>
+
+                    <input
+                        id="cipher-lon"
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="e.g. 32.8541"
+                    >
+                </div>
+
+                <button
+                    class="primary-btn"
+                    id="cipher-verify"
+                    type="button"
+                    style="
+                        grid-column:1 / -1;
+                        width:100%;
+                        min-height:40px;
+                        box-sizing:border-box;
+                    "
+                >
+                    VERIFY COORDINATES
+                </button>
+            </div>
+        `);
+
+        cipherEl("cipher-verify").addEventListener(
+            "click",
+            verifyCipherCoordinates
+        );
+
+        initializeCipherMap();
+        startCipherTimer();
+
+    } catch (error) {
+        console.error(
+            "Cipher initialization error:",
+            error
+        );
+
+        cipherFeedback(
+            "Could not start investigation: " +
+            error.message
+        );
+    }
+}
+
+/* =========================================================
+   MISSION 1 — HIDDEN COORDINATES
+========================================================= */
+
+function verifyCipherCoordinates() {
+    if (!cipherActive(1)) return;
+
+    const latitudeText = cipherEl("cipher-lat")
+        .value.trim().replace(",", ".");
+
+    const longitudeText = cipherEl("cipher-lon")
+        .value.trim().replace(",", ".");
+
+    const lat = Number(latitudeText);
+    const lon = Number(longitudeText);
+
+    if (
+        !latitudeText ||
+        !longitudeText ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lon) > 180
+    ) {
+        cipherFeedback(
+            "Enter valid decimal coordinates."
+        );
+        return;
+    }
+
+    const target =
+        cipherGame.scenario.correct.point;
+
+    const distance = cipherKm(
+        [lat, lon],
+        target
+    );
+
+    if (distance > 0.15) {
+        cipherFeedback(
+            "Incorrect coordinates. Check your DMS conversion."
+        );
+        return;
+    }
 
     cipherGame.layer.clearLayers();
 
-    L.marker(target)
-        .addTo(cipherGame.layer)
-        .bindPopup("<strong>HIDDEN LOCATION DISCOVERED</strong>")
-        .openPopup();
+    cipherMarker(
+        target,
+        "✓",
+        "#59c987"
+    )
+    .bindPopup("HIDDEN LOCATION DISCOVERED")
+    .openPopup();
 
-    cipherGame.map.flyTo(target, 12, {
-        duration: 2
-    });
+    cipherGame.map.flyTo(target, 12);
 
-    document.getElementById("progress-text").textContent = "1 / 4";
-    document.getElementById("progress-fill").style.width = "25%";
-
-    updateCipherTimeline(2);
-    updateCipherEvidence(1);
-
-    document.getElementById("mission-actions").innerHTML = `
-        <div class="selection-info">
-            ✓ MISSION 1 COMPLETED
-        </div>
-
-        <p>
-            The hidden coordinates have been decoded.
-            New distance evidence is now available.
-        </p>
-
-        <button
-            class="primary-btn"
-            id="cipher-next-mission"
-            type="button"
-        >
-            CONTINUE TO MISSION 2
-        </button>
-    `;
-
-    document.getElementById("cipher-next-mission")
-        .addEventListener("click", startCipherMission2);
+    cipherComplete(
+        1,
+        "Coordinates accepted! Secret location identified.",
+        startCipherMission2
+    );
 }
 
-
-/* =========================================
-   MISSION 2 — SCENARIO GENERATION
-========================================= */
+/* =========================================================
+   MISSION 2 — DISTANCE CIPHER
+========================================================= */
 
 function generateCipherDistanceScenario() {
-    const start = cipherGame.scenario.correct.point;
+    const start =
+        cipherGame.scenario.correct.point;
 
-    // Keep all generated locations inside Türkiye.
-    for (let attempt = 0; attempt < 100; attempt++) {
-        const targetFeature = turf.destination(
-            turf.point([start[1], start[0]]),
-            8 + Math.random() * 12,
-            Math.random() * 360,
-            { units: "kilometers" }
+    for (let attempt = 0; attempt < 500; attempt++) {
+        const target = cipherDestination(
+            start,
+            cipherRandom(8, 20),
+            cipherRandom(0, 360)
         );
 
-        const target = [
-            targetFeature.geometry.coordinates[1],
-            targetFeature.geometry.coordinates[0]
+        if (!cipherInsideTurkey(target)) {
+            continue;
+        }
+
+        const colors = [
+            "#f4c76a",
+            "#5fc9d7",
+            "#c79af7"
         ];
 
-        if (!CipherCase.isInsideTurkey(...target)) continue;
-
         const bearings = [20, 140, 260];
-        const colors = ["#f4c76a", "#5fc9d7", "#c79af7"];
-        const references = [];
 
-        let valid = true;
+        const references = bearings.map(
+            (bearing, index) => {
+                const point = cipherDestination(
+                    target,
+                    cipherRandom(5, 11),
+                    bearing + cipherRandom(-10, 10)
+                );
 
-        for (let i = 0; i < 3; i++) {
-            const radius = 5 + Math.random() * 6;
-
-            const feature = turf.destination(
-                turf.point([target[1], target[0]]),
-                radius,
-                bearings[i] + Math.random() * 20 - 10,
-                { units: "kilometers" }
-            );
-
-            const point = [
-                feature.geometry.coordinates[1],
-                feature.geometry.coordinates[0]
-            ];
-
-            if (!CipherCase.isInsideTurkey(...point)) {
-                valid = false;
-                break;
+                return {
+                    name: `REFERENCE ${index + 1}`,
+                    point,
+                    color: colors[index],
+                    distance: cipherKm(point, target)
+                };
             }
+        );
 
-            references.push({
-                name: `REFERENCE ${i + 1}`,
-                point,
-                color: colors[i],
-                distance: cipherDistance(
-                    point[0], point[1],
-                    target[0], target[1]
-                ) / 1000
-            });
+        const wrong1 = cipherDestination(
+            target, 4, 70
+        );
+
+        const wrong2 = cipherDestination(
+            target, 5, 210
+        );
+
+        const allPoints = [
+            ...references.map(r => r.point),
+            wrong1,
+            wrong2
+        ];
+
+        if (!allPoints.every(cipherInsideTurkey)) {
+            continue;
         }
 
-        if (!valid) continue;
-
-        const candidates = [{
-            point: target,
-            correct: true
-        }];
-
-        for (const bearing of [70, 210]) {
-            const feature = turf.destination(
-                turf.point([target[1], target[0]]),
-                3 + Math.random() * 3,
-                bearing,
-                { units: "kilometers" }
-            );
-
-            const point = [
-                feature.geometry.coordinates[1],
-                feature.geometry.coordinates[0]
-            ];
-
-            if (!CipherCase.isInsideTurkey(...point)) {
-                valid = false;
-                break;
-            }
-
-            candidates.push({
-                point,
+        const candidates = cipherShuffle([
+            {
+                point: target,
+                correct: true
+            },
+            {
+                point: wrong1,
                 correct: false
-            });
-        }
-
-        if (!valid) continue;
-
-        // Shuffle the three candidates.
-        for (let i = candidates.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [candidates[i], candidates[j]] =
-                [candidates[j], candidates[i]];
-        }
+            },
+            {
+                point: wrong2,
+                correct: false
+            }
+        ]);
 
         candidates.forEach((candidate, index) => {
             candidate.label = ["A", "B", "C"][index];
@@ -563,70 +807,61 @@ function generateCipherDistanceScenario() {
             candidates,
             revealed: 0,
             selectedIndex: null,
-            chart: null,
-            candidateMarkers: []
+            chart: null
         };
     }
 
     throw new Error(
-        "Could not generate a valid distance scenario in Türkiye."
+        "Distance scenario generation failed."
     );
 }
 
-
-/* =========================================
-   MISSION 2 — START
-========================================= */
-
 function startCipherMission2() {
+    if (
+        cipherGame.timedOut ||
+        cipherGame.stage !== 1 ||
+        !cipherGame.finished
+    ) return;
+
+    let mission;
+
+    try {
+        mission = generateCipherDistanceScenario();
+    } catch (error) {
+        cipherFeedback(error.message);
+        return;
+    }
+
     cipherGame.stage = 2;
     cipherGame.finished = false;
+    cipherGame.distanceMission = mission;
 
-    cipherGame.distanceMission =
-        generateCipherDistanceScenario();
+    cipherMissionInfo(
+        2,
+        "The Distance Cipher",
+        "Three distance clues reveal the next destination.",
+        "Reveal the clues and find the candidate matching all distances."
+    );
 
-    document.getElementById("stage-number").textContent =
-        "MISSION 02 / 04";
-
-    document.getElementById("mission-title").textContent =
-        "The Distance Cipher";
-
-    document.getElementById("mission-description").textContent =
-        "Three distance clues reveal the researcher's next destination. Analyze their intersection to find it.";
-
-    document.getElementById("mission-objective").textContent =
-        "Reveal the three clues one by one. Compare the distance circles and select the candidate that matches all three measurements.";
-
-    document.getElementById("feedback").textContent = "";
-
-    updateCipherTimeline(2);
-    updateCipherEvidence(1);
-
-    document.getElementById("evidence-documents").innerHTML = `
+    cipherHTML("evidence-documents", `
         <div class="document-card">
-            <h4>THE DISTANCE CIPHER</h4>
+            <h4>DISTANCE ANALYSIS</h4>
+
             <p>
-                Three reference points surround a hidden destination.
-                Reveal each clue to investigate the possible location.
+                Each circle represents a distance
+                from a reference point.
+            </p>
+
+            <p>
+                The correct candidate matches
+                all three measurements.
             </p>
         </div>
+    `);
 
-        <div class="document-card">
-            <h4>SPATIAL ANALYSIS</h4>
-            <p>
-                Each dashed circle shows locations at a fixed
-                distance from its reference point.
-            </p>
-            <p>
-                The correct candidate should match all
-                three distance measurements.
-            </p>
-        </div>
-    `;
-
-    document.getElementById("mission-actions").innerHTML = `
+    cipherHTML("mission-actions", `
         <div class="selection-info">
-            THREE DISTANCE CLUES RECOVERED
+            THREE DISTANCE CLUES
         </div>
 
         <div id="cipher-distance-clues">
@@ -634,6 +869,7 @@ function startCipherMission2() {
                 class="primary-btn"
                 id="cipher-reveal-clue"
                 type="button"
+                style="width:100%"
             >
                 REVEAL CLUE 1
             </button>
@@ -641,56 +877,51 @@ function startCipherMission2() {
 
         <div
             id="cipher-distance-chart"
-            style="margin-top:20px;display:none;"
+            style="display:none;margin-top:20px"
         >
             <canvas id="cipher-chart-canvas"></canvas>
         </div>
 
-        <div
-            id="cipher-candidate-actions"
-            style="margin-top:16px;"
-        ></div>
-    `;
+        <div id="cipher-candidate-actions"></div>
+    `);
 
-    document.getElementById("cipher-reveal-clue")
-        .addEventListener("click", revealCipherDistanceClue);
+    cipherEl("cipher-reveal-clue").addEventListener(
+        "click",
+        revealCipherDistanceClue
+    );
 
     cipherGame.layer.clearLayers();
 
-    const start = cipherGame.scenario.correct.point;
+    cipherMarker(
+        cipherGame.scenario.correct.point,
+        "S",
+        "#5fc9d7"
+    ).bindPopup("PREVIOUS LOCATION");
 
-    L.marker(start)
-        .addTo(cipherGame.layer)
-        .bindPopup("MISSION 1 — DISCOVERED LOCATION");
-
-    // Show the search area without centering on the secret target.
-    cipherGame.map.setView(start, 9);
+    cipherGame.map.setView(
+        cipherGame.scenario.correct.point,
+        9
+    );
 }
 
-
-/* =========================================
-   MISSION 2 — REVEAL CLUES
-========================================= */
-
 function revealCipherDistanceClue() {
+    if (!cipherActive(2)) return;
+
     const mission = cipherGame.distanceMission;
 
-    if (
-        !mission ||
-        cipherGame.stage !== 2 ||
-        mission.revealed >= 3
-    ) return;
+    if (mission.revealed >= 3) return;
 
     const index = mission.revealed;
     const reference = mission.references[index];
 
-    L.marker(reference.point, {
-        icon: makeCipherNumberIcon(index + 1, reference.color)
-    })
-        .addTo(cipherGame.layer)
-        .bindPopup(
-            `${reference.name}<br>Distance: ${reference.distance.toFixed(2)} km`
-        );
+    cipherMarker(
+        reference.point,
+        index + 1,
+        reference.color
+    ).bindPopup(
+        `${reference.name}: ` +
+        `${reference.distance.toFixed(2)} km`
+    );
 
     L.circle(reference.point, {
         radius: reference.distance * 1000,
@@ -702,26 +933,23 @@ function revealCipherDistanceClue() {
 
     mission.revealed++;
 
-    const container =
-        document.getElementById("cipher-distance-clues");
-
     const clue = document.createElement("div");
     clue.className = "document-card";
 
     clue.innerHTML = `
-        <h4>CLUE ${mission.revealed} DISCOVERED</h4>
+        <h4>CLUE ${mission.revealed}</h4>
+
         <p>
-            ${reference.name} —
-            ${reference.distance.toFixed(2)} km
+            ${reference.name}:
+            <strong>
+                ${reference.distance.toFixed(2)} km
+            </strong>
         </p>
     `;
 
-    container.insertBefore(
-        clue,
-        document.getElementById("cipher-reveal-clue")
-    );
+    const button = cipherEl("cipher-reveal-clue");
 
-    const button = document.getElementById("cipher-reveal-clue");
+    button.before(clue);
 
     if (mission.revealed < 3) {
         button.textContent =
@@ -732,204 +960,170 @@ function revealCipherDistanceClue() {
         showCipherDistanceChart();
         showCipherCandidates();
 
-        document.getElementById("feedback").textContent =
-            "All clues revealed. Select a candidate to compare its distances.";
+        cipherFeedback(
+            "All clues revealed. Compare the candidates."
+        );
     }
 }
 
-
-/* =========================================
-   MISSION 2 — CHART.JS
-========================================= */
-
 function showCipherDistanceChart() {
     const mission = cipherGame.distanceMission;
-
-    const container =
-        document.getElementById("cipher-distance-chart");
+    const container = cipherEl(
+        "cipher-distance-chart"
+    );
 
     container.style.display = "block";
 
     if (typeof Chart === "undefined") {
         container.innerHTML =
-            "<p>Distance chart could not be loaded.</p>";
+            "<p>Chart.js is unavailable. Use the map clues.</p>";
         return;
     }
-
-    const canvas =
-        document.getElementById("cipher-chart-canvas");
 
     if (mission.chart) {
         mission.chart.destroy();
     }
 
-    mission.chart = new Chart(canvas, {
-        type: "bar",
+    mission.chart = new Chart(
+        cipherEl("cipher-chart-canvas"),
+        {
+            type: "bar",
 
-        data: {
-            labels: mission.references.map(ref => ref.name),
-
-            datasets: [{
-                label: "Clue distance (km)",
-
-                data: mission.references.map(ref =>
-                    Number(ref.distance.toFixed(2))
+            data: {
+                labels: mission.references.map(
+                    r => r.name
                 ),
 
-                backgroundColor: mission.references.map(
-                    ref => ref.color
-                ),
+                datasets: [{
+                    label: "Distance (km)",
 
-                borderRadius: 6
-            }]
-        },
+                    data: mission.references.map(
+                        r => Number(
+                            r.distance.toFixed(2)
+                        )
+                    ),
 
-        options: {
-            responsive: true,
-
-            plugins: {
-                legend: {
-                    labels: {
-                        color: "#ffffff"
-                    }
-                }
+                    backgroundColor:
+                        mission.references.map(
+                            r => r.color
+                        )
+                }]
             },
 
-            scales: {
-                x: {
-                    ticks: {
-                        color: "#ffffff"
+            options: {
+                responsive: true,
+
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: "#ffffff"
+                        }
                     }
                 },
 
-                y: {
-                    beginAtZero: true,
-
-                    ticks: {
-                        color: "#ffffff"
+                scales: {
+                    x: {
+                        ticks: {
+                            color: "#ffffff"
+                        }
                     },
 
-                    title: {
-                        display: true,
-                        text: "Distance (km)",
-                        color: "#ffffff"
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: "#ffffff"
+                        }
                     }
                 }
             }
         }
-    });
+    );
 }
-
-
-/* =========================================
-   MISSION 2 — CANDIDATES
-========================================= */
 
 function showCipherCandidates() {
     const mission = cipherGame.distanceMission;
 
-    const container =
-        document.getElementById("cipher-candidate-actions");
-
-    container.innerHTML = `
+    cipherHTML("cipher-candidate-actions", `
         <div class="selection-info">
             SELECT A CANDIDATE
         </div>
 
-        <p>
-            Choose A, B or C on the map to inspect
-            its distances from the three reference points.
-        </p>
+        <p>Click A, B or C on the map.</p>
 
         <div id="cipher-candidate-comparison"></div>
-    `;
+    `);
 
-    mission.candidateMarkers = [];
-
-    mission.candidates.forEach((candidate, index) => {
-        const marker = L.marker(candidate.point, {
-            icon: makeCipherNumberIcon(
+    mission.candidates.forEach(
+        (candidate, index) => {
+            cipherMarker(
+                candidate.point,
                 candidate.label,
-                "#ffffff"
+                "#e2e8f0"
             )
-        }).addTo(cipherGame.layer);
+            .bindPopup(
+                `CANDIDATE ${candidate.label}`
+            )
+            .on("click", () => {
+                selectCipherCandidate(index);
+            });
+        }
+    );
 
-        marker.bindPopup(`CANDIDATE ${candidate.label}`);
-
-        marker.on("click", () => {
-            selectCipherCandidate(index);
-        });
-
-        mission.candidateMarkers.push(marker);
-    });
-
-    // Fit all visible evidence, not the hidden target alone.
-    const points = [
-        cipherGame.scenario.correct.point,
-        ...mission.references.map(ref => ref.point),
-        ...mission.candidates.map(candidate => candidate.point)
-    ];
-
-    cipherGame.map.fitBounds(points, {
-        padding: [45, 45],
-        maxZoom: 11
-    });
+    cipherGame.map.fitBounds(
+        [
+            ...mission.references.map(r => r.point),
+            ...mission.candidates.map(c => c.point)
+        ],
+        {
+            padding: [40, 40],
+            maxZoom: 11
+        }
+    );
 }
 
-
-/* =========================================
-   MISSION 2 — COMPARE DISTANCES
-========================================= */
-
 function selectCipherCandidate(index) {
+    if (!cipherActive(2)) return;
+
     const mission = cipherGame.distanceMission;
 
-    if (
-        !mission ||
-        cipherGame.finished ||
-        mission.revealed !== 3
-    ) return;
+    if (mission.revealed !== 3) return;
 
     mission.selectedIndex = index;
 
     const candidate = mission.candidates[index];
 
-    const rows = mission.references.map((ref, i) => {
-        const actualDistance = cipherDistance(
-            candidate.point[0],
-            candidate.point[1],
-            ref.point[0],
-            ref.point[1]
-        ) / 1000;
+    const rows = mission.references.map(
+        (reference, i) => {
+            const actual = cipherKm(
+                candidate.point,
+                reference.point
+            );
 
-        const difference = Math.abs(
-            actualDistance - ref.distance
-        );
+            const difference = Math.abs(
+                actual - reference.distance
+            );
 
-        return `
-            <tr>
-                <td>${i + 1}</td>
-                <td>${ref.distance.toFixed(2)} km</td>
-                <td>${actualDistance.toFixed(2)} km</td>
-                <td>${difference.toFixed(2)} km</td>
-            </tr>
-        `;
-    }).join("");
+            return `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td>
+                        ${reference.distance.toFixed(2)}
+                    </td>
+                    <td>${actual.toFixed(2)}</td>
+                    <td>${difference.toFixed(2)}</td>
+                </tr>
+            `;
+        }
+    ).join("");
 
-    document.getElementById(
-        "cipher-candidate-comparison"
-    ).innerHTML = `
+    cipherHTML("cipher-candidate-comparison", `
         <div class="document-card">
-            <h4>CANDIDATE ${candidate.label} — DISTANCE ANALYSIS</h4>
+            <h4>
+                CANDIDATE ${candidate.label}
+            </h4>
 
-            <div style="overflow-x:auto;">
-                <table style="
-                    width:100%;
-                    border-collapse:collapse;
-                    color:#ffffff;
-                    font-size:12px;
-                    text-align:left;
-                ">
+            <div style="overflow-x:auto">
+                <table style="width:100%;color:white">
                     <thead>
                         <tr>
                             <th>REF</th>
@@ -943,168 +1137,102 @@ function selectCipherCandidate(index) {
                 </table>
             </div>
 
-            <p>
-                Does this candidate match all three clues?
-            </p>
-
             <button
                 class="primary-btn"
                 id="cipher-confirm-candidate"
                 type="button"
+                style="width:100%;margin-top:15px"
             >
                 CONFIRM CANDIDATE ${candidate.label}
             </button>
         </div>
-    `;
+    `);
 
-    document.getElementById("cipher-confirm-candidate")
+    cipherEl("cipher-confirm-candidate")
         .addEventListener(
             "click",
             verifyCipherDistanceCandidate
         );
-
-    document.getElementById("feedback").textContent =
-        `Candidate ${candidate.label} selected. Compare the distance differences before confirming.`;
 }
 
-
-/* =========================================
-   MISSION 2 — VERIFY ANSWER
-========================================= */
-
 function verifyCipherDistanceCandidate() {
+    if (!cipherActive(2)) return;
+
     const mission = cipherGame.distanceMission;
 
-    if (
-        !mission ||
-        cipherGame.finished ||
-        mission.selectedIndex === null
-    ) return;
+    if (mission.selectedIndex === null) return;
 
     const candidate =
         mission.candidates[mission.selectedIndex];
 
     if (!candidate.correct) {
-        document.getElementById("feedback").textContent =
-            "Incorrect destination. This candidate does not match all three distance clues.";
+        cipherFeedback(
+            "Incorrect candidate. Compare the distance differences."
+        );
         return;
     }
-
-    cipherGame.finished = true;
-
-    document.getElementById("feedback").textContent =
-        "Correct! All three distance measurements match.";
-
-    document.getElementById("progress-text").textContent =
-        "2 / 4";
-
-    document.getElementById("progress-fill").style.width =
-        "50%";
-
-    updateCipherTimeline(3);
-    updateCipherEvidence(2);
 
     if (mission.chart) {
         mission.chart.destroy();
         mission.chart = null;
     }
 
-    document.getElementById("mission-actions").innerHTML = `    
-    <div class="selection-info">
-        ✓ MISSION 2 COMPLETED
-    </div>
-    
-    <p>
-        You identified the hidden destination
-        using spatial distance analysis.
-    </p>
-
-    <button
-        class="primary-btn"
-        id="cipher-next-mission"
-        type="button"
-    >
-        CONTINUE TO MISSION 3
-    </button>
-`;
-
-document.getElementById("cipher-next-mission")
-    .addEventListener("click", startCipherMission3);
-
-
-document.getElementById("cipher-next-mission")
-    .addEventListener("click", startCipherMission3);
-
+    cipherComplete(
+        2,
+        "Correct! All three distances match.",
+        startCipherMission3
+    );
 }
 
-/* =========================================
-   MISSION 3 — THE OVERLAY PUZZLE
-========================================= */
+/* =========================================================
+   MISSION 3 — SPATIAL OVERLAY
+========================================================= */
 
-function startCipherMission3() {
+function generateCipherOverlayScenario() {
+    const center =
+        cipherGame.distanceMission.target;
 
-    cipherGame.stage = 3;
-    cipherGame.finished = false;
-
-    const previous = cipherGame.distanceMission;
-
-    if (!previous) return;
-
-    if (previous.chart) {
-        previous.chart.destroy();
-        previous.chart = null;
-    }
-
-    const center = previous.target;
-
-    const centerPoint = turf.point([
+    const point = turf.point([
         center[1],
         center[0]
     ]);
 
-    // Fictional GIS layers generated around
-    // the destination discovered in Mission 2.
-
     const searchArea = turf.buffer(
-        centerPoint,
+        point,
         5,
         { units: "kilometers" }
     );
 
-    const forestCenter = turf.destination(
-        centerPoint,
-        2,
-        70,
-        { units: "kilometers" }
-    );
-
     const forestArea = turf.buffer(
-        forestCenter,
+        turf.destination(
+            point,
+            2,
+            70,
+            { units: "kilometers" }
+        ),
         3.5,
         { units: "kilometers" }
     );
 
-    const restrictedCenter = turf.destination(
-        centerPoint,
-        2,
-        250,
-        { units: "kilometers" }
-    );
-
     const restrictedArea = turf.buffer(
-        restrictedCenter,
+        turf.destination(
+            point,
+            2,
+            250,
+            { units: "kilometers" }
+        ),
         2.5,
         { units: "kilometers" }
     );
 
-    const inside = (point, polygon) =>
+    const inside = (candidate, polygon) =>
         turf.booleanPointInPolygon(
-            turf.point([point[1], point[0]]),
+            turf.point([
+                candidate[1],
+                candidate[0]
+            ]),
             polygon
         );
-
-    // Generate one correct and two incorrect
-    // candidates based on actual spatial tests.
 
     const candidates = [];
 
@@ -1115,33 +1243,37 @@ function startCipherMission3() {
     ];
 
     for (const category of categories) {
-
         let found = false;
 
-        for (let attempt = 0; attempt < 1000; attempt++) {
-
-            const distance = Math.random() * 4.5;
-            const bearing = Math.random() * 360;
-
-            const feature = turf.destination(
-                centerPoint,
-                distance,
-                bearing,
-                { units: "kilometers" }
+        for (
+            let attempt = 0;
+            attempt < 3000;
+            attempt++
+        ) {
+            const candidate = cipherDestination(
+                center,
+                cipherRandom(0, 4.5),
+                cipherRandom(0, 360)
             );
 
-            const point = [
-                feature.geometry.coordinates[1],
-                feature.geometry.coordinates[0]
-            ];
-
-            if (!CipherCase.isInsideTurkey(...point)) {
+            if (!cipherInsideTurkey(candidate)) {
                 continue;
             }
 
-            const inSearch = inside(point, searchArea);
-            const inForest = inside(point, forestArea);
-            const inRestricted = inside(point, restrictedArea);
+            const inSearch = inside(
+                candidate,
+                searchArea
+            );
+
+            const inForest = inside(
+                candidate,
+                forestArea
+            );
+
+            const inRestricted = inside(
+                candidate,
+                restrictedArea
+            );
 
             let matches = false;
 
@@ -1150,34 +1282,29 @@ function startCipherMission3() {
                     inSearch &&
                     inForest &&
                     !inRestricted;
-            }
 
-            if (category === "outsideForest") {
+            } else if (category === "outsideForest") {
                 matches =
                     inSearch &&
                     !inForest &&
                     !inRestricted;
-            }
 
-            if (category === "restricted") {
+            } else {
                 matches =
                     inSearch &&
                     inRestricted;
             }
 
-            const farEnough = candidates.every(existing =>
-                cipherDistance(
-                    point[0],
-                    point[1],
-                    existing.point[0],
-                    existing.point[1]
-                ) > 700
+            const separated = candidates.every(
+                c => cipherKm(
+                    c.point,
+                    candidate
+                ) > 0.7
             );
 
-            if (matches && farEnough) {
-
+            if (matches && separated) {
                 candidates.push({
-                    point,
+                    point: candidate,
                     correct: category === "correct"
                 });
 
@@ -1187,126 +1314,112 @@ function startCipherMission3() {
         }
 
         if (!found) {
-            document.getElementById("feedback").textContent =
-                "Could not generate the overlay puzzle. Please restart the chapter.";
-            return;
+            throw new Error(
+                "Could not generate overlay candidates."
+            );
         }
     }
 
-    // Randomize candidate order.
-    for (let i = candidates.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+    const shuffled = cipherShuffle(candidates);
 
-        [candidates[i], candidates[j]] =
-            [candidates[j], candidates[i]];
-    }
-
-    candidates.forEach((candidate, index) => {
+    shuffled.forEach((candidate, index) => {
         candidate.label = ["A", "B", "C"][index];
     });
 
-    cipherGame.overlayMission = {
+    return {
+        center,
         searchArea,
         forestArea,
         restrictedArea,
-        candidates,
+        candidates: shuffled,
         revealed: 0,
         selectedIndex: null,
-        layers: {},
-        markers: []
+        layers: {}
     };
+}
 
-    document.getElementById("stage-number").textContent =
-        "MISSION 03 / 04";
+function startCipherMission3() {
+    if (
+        cipherGame.timedOut ||
+        cipherGame.stage !== 2 ||
+        !cipherGame.finished
+    ) return;
 
-    document.getElementById("mission-title").textContent =
-        "The Overlay Puzzle";
+    let mission;
 
-    document.getElementById("mission-description").textContent =
-        "The researcher left a spatial clue. Three map layers must be analyzed to identify the safe meeting location.";
+    try {
+        mission = generateCipherOverlayScenario();
+    } catch (error) {
+        cipherFeedback(error.message);
+        return;
+    }
 
-    document.getElementById("mission-objective").textContent =
-        "Find the candidate inside the Search Area and Forest Area, but outside the Restricted Zone.";
+    cipherGame.overlayMission = mission;
+    cipherGame.stage = 3;
+    cipherGame.finished = false;
 
-    document.getElementById("feedback").textContent = "";
+    cipherMissionInfo(
+        3,
+        "The Overlay Puzzle",
+        "Three spatial layers reveal the safe meeting location.",
+        "Find a candidate inside Search and Forest, but outside Restricted."
+    );
 
-    updateCipherTimeline(3);
-    updateCipherEvidence(2);
-
-    document.getElementById("evidence-documents").innerHTML = `
+    cipherHTML("evidence-documents", `
         <div class="document-card">
-            <h4>SPATIAL EVIDENCE</h4>
-            <p>
-                The meeting location must satisfy
-                three spatial conditions.
-            </p>
-            <p>
-                It must be inside the search area,
-                inside the forest and outside
-                the restricted zone.
-            </p>
-        </div>
+            <h4>SPATIAL OVERLAY RULE</h4>
 
-        <div class="document-card">
-            <h4>OVERLAY RULE</h4>
             <p>
                 Search Area ∩ Forest Area
                 − Restricted Zone
             </p>
+
             <p>
-                Reveal the layers and compare
-                the candidate locations.
+                The correct candidate must satisfy
+                all three spatial conditions.
             </p>
         </div>
-    `;
+    `);
 
-    document.getElementById("mission-actions").innerHTML = `
+    cipherHTML("mission-actions", `
         <div class="selection-info">
             SPATIAL LAYERS AVAILABLE
         </div>
-
-        <p>
-            Reveal each layer to investigate
-            the possible meeting locations.
-        </p>
 
         <div id="cipher-overlay-controls">
             <button
                 class="primary-btn"
                 id="cipher-reveal-overlay"
                 type="button"
+                style="width:100%"
             >
                 REVEAL SEARCH AREA
             </button>
         </div>
 
-        <div
-            id="cipher-overlay-selection"
-            style="margin-top:16px;"
-        ></div>
-    `;
+        <div id="cipher-overlay-selection"></div>
+    `);
 
     cipherGame.layer.clearLayers();
 
-    cipherGame.map.setView(center, 11);
+    cipherGame.map.setView(
+        mission.center,
+        11
+    );
 
-    document.getElementById("cipher-reveal-overlay")
+    cipherEl("cipher-reveal-overlay")
         .addEventListener(
             "click",
             revealCipherOverlayLayer
         );
 }
 
-
-/* =========================================
-   MISSION 3 — REVEAL LAYERS
-========================================= */
-
 function revealCipherOverlayLayer() {
+    if (!cipherActive(3)) return;
 
     const mission = cipherGame.overlayMission;
 
-    if (!mission || mission.revealed >= 3) return;
+    if (mission.revealed >= 3) return;
 
     const definitions = [
         {
@@ -1329,141 +1442,115 @@ function revealCipherOverlayLayer() {
         }
     ];
 
-    const definition = definitions[mission.revealed];
+    const definition =
+        definitions[mission.revealed];
 
-    const layer = L.geoJSON(definition.polygon, {
-        style: {
-            color: definition.color,
-            weight: 3,
-            fillColor: definition.color,
-            fillOpacity: 0.16
+    const layer = L.geoJSON(
+        definition.polygon,
+        {
+            style: {
+                color: definition.color,
+                weight: 3,
+                fillColor: definition.color,
+                fillOpacity: 0.16
+            }
         }
-    }).addTo(cipherGame.layer);
+    ).addTo(cipherGame.layer);
 
     mission.layers[definition.key] = layer;
     mission.revealed++;
 
-    const controls =
-        document.getElementById("cipher-overlay-controls");
-
     const item = document.createElement("div");
-
     item.className = "document-card";
 
     item.innerHTML = `
-        <label style="
-            display:flex;
-            align-items:center;
-            gap:10px;
-            cursor:pointer;
-        ">
+        <label>
             <input
                 type="checkbox"
                 id="cipher-layer-${definition.key}"
                 checked
             >
-            <span style="color:${definition.color};">
+
+            <span style="color:${definition.color}">
                 ●
             </span>
+
             ${definition.name}
         </label>
     `;
 
-    controls.insertBefore(
-        item,
-        document.getElementById("cipher-reveal-overlay")
+    const button = cipherEl(
+        "cipher-reveal-overlay"
     );
 
-    document.getElementById(
+    button.before(item);
+
+    cipherEl(
         `cipher-layer-${definition.key}`
-    ).addEventListener("change", event => {
-
-        if (event.target.checked) {
-            cipherGame.layer.addLayer(layer);
-        } else {
-            cipherGame.layer.removeLayer(layer);
+    ).addEventListener(
+        "change",
+        event => {
+            if (event.target.checked) {
+                cipherGame.layer.addLayer(layer);
+            } else {
+                cipherGame.layer.removeLayer(layer);
+            }
         }
-    });
-
-    const button =
-        document.getElementById("cipher-reveal-overlay");
-
-    const nextLabels = [
-        "REVEAL FOREST AREA",
-        "REVEAL RESTRICTED ZONE"
-    ];
+    );
 
     if (mission.revealed < 3) {
-
         button.textContent =
-            nextLabels[mission.revealed - 1];
+            mission.revealed === 1
+                ? "REVEAL FOREST AREA"
+                : "REVEAL RESTRICTED ZONE";
 
     } else {
-
         button.remove();
+
         showCipherOverlayCandidates();
 
-        document.getElementById("feedback").textContent =
-            "All layers revealed. Select the candidate that satisfies the overlay rule.";
+        cipherFeedback(
+            "All layers revealed. Find the safe location."
+        );
     }
 }
 
-
-/* =========================================
-   MISSION 3 — CANDIDATE SELECTION
-========================================= */
-
 function showCipherOverlayCandidates() {
-
     const mission = cipherGame.overlayMission;
 
-    const container =
-        document.getElementById("cipher-overlay-selection");
-
-    container.innerHTML = `
+    cipherHTML("cipher-overlay-selection", `
         <div class="selection-info">
             SELECT THE SAFE LOCATION
         </div>
 
         <p>
-            Select A, B or C on the map.
-            Check all three spatial conditions.
+            Click candidate A, B or C on the map.
         </p>
 
         <div id="cipher-overlay-comparison"></div>
-    `;
+    `);
 
-    mission.candidates.forEach((candidate, index) => {
-
-        const marker = L.marker(candidate.point, {
-            icon: makeCipherNumberIcon(
+    mission.candidates.forEach(
+        (candidate, index) => {
+            cipherMarker(
+                candidate.point,
                 candidate.label,
-                "#ffffff"
+                "#e2e8f0"
             )
-        }).addTo(cipherGame.layer);
-
-        marker.bindPopup(
-            `CANDIDATE ${candidate.label}`
-        );
-
-        marker.on("click", () => {
-            selectCipherOverlayCandidate(index);
-        });
-
-        mission.markers.push(marker);
-    });
+            .bindPopup(
+                `CANDIDATE ${candidate.label}`
+            )
+            .on("click", () => {
+                selectCipherOverlayCandidate(index);
+            });
+        }
+    );
 }
 
-
-/* =========================================
-   MISSION 3 — VERIFY SPATIAL CONDITIONS
-========================================= */
-
 function selectCipherOverlayCandidate(index) {
+    if (!cipherActive(3)) return;
 
     const mission = cipherGame.overlayMission;
-
-    if (!mission || cipherGame.finished) return;
 
     mission.selectedIndex = index;
 
@@ -1489,13 +1576,11 @@ function selectCipherOverlayCandidate(index) {
         mission.restrictedArea
     );
 
-    const container =
-        document.getElementById("cipher-overlay-comparison");
-
-    container.innerHTML = `
+    cipherHTML("cipher-overlay-comparison", `
         <div class="document-card">
-
-            <h4>CANDIDATE ${candidate.label}</h4>
+            <h4>
+                CANDIDATE ${candidate.label}
+            </h4>
 
             <p>
                 Search Area:
@@ -1516,213 +1601,492 @@ function selectCipherOverlayCandidate(index) {
                 class="primary-btn"
                 id="cipher-confirm-overlay"
                 type="button"
+                style="width:100%"
             >
                 CONFIRM CANDIDATE ${candidate.label}
             </button>
-
         </div>
-    `;
+    `);
 
-    document.getElementById("cipher-confirm-overlay")
+    cipherEl("cipher-confirm-overlay")
         .addEventListener(
             "click",
             verifyCipherOverlayCandidate
         );
 }
 
-
-/* =========================================
-   MISSION 3 — COMPLETE
-========================================= */
-
 function verifyCipherOverlayCandidate() {
+    if (!cipherActive(3)) return;
 
     const mission = cipherGame.overlayMission;
 
-    if (
-        !mission ||
-        cipherGame.finished ||
-        mission.selectedIndex === null
-    ) return;
+    if (mission.selectedIndex === null) return;
 
     const candidate =
         mission.candidates[mission.selectedIndex];
 
     if (!candidate.correct) {
-
-        document.getElementById("feedback").textContent =
-            "Incorrect location. Check the three spatial conditions and try again.";
-
+        cipherFeedback(
+            "Incorrect location. Check all three spatial conditions."
+        );
         return;
     }
 
-    cipherGame.finished = true;
-
-    document.getElementById("feedback").textContent =
-        "Correct! The location satisfies all spatial conditions.";
-
-    document.getElementById("progress-text").textContent =
-        "3 / 4";
-
-    document.getElementById("progress-fill").style.width =
-        "75%";
-
-    updateCipherTimeline(4);
-    updateCipherEvidence(3);
-
-    document.getElementById("mission-actions").innerHTML = `
-    <div class="selection-info">
-        ✓ MISSION 3 COMPLETED
-    </div>
-
-    <p>
-        The overlay analysis is complete.
-        The safe meeting location has been identified.
-    </p>
-
-    <button
-        class="primary-btn"
-        id="cipher-next-mission"
-        type="button"
-    >
-        CONTINUE TO MISSION 4
-    </button>
-`;
-
-document.getElementById("cipher-next-mission")
-    .addEventListener("click", startCipherMission4);
-
+    cipherComplete(
+        3,
+        "Correct! The location satisfies all spatial conditions.",
+        startCipherMission4
+    );
 }
 
+/* =========================================================
+   MISSION 4 — RANDOM SCENARIO GENERATION
+========================================================= */
 
-/* =========================================
-   STOP CHAPTER 3
-========================================= */
+function generateCipherFinalScenario(origin) {
+    for (let attempt = 0; attempt < 1000; attempt++) {
+        const bearing = cipherRandom(0, 360);
 
+        const signalLimit = cipherRound(
+            cipherRandom(3.4, 5.8),
+            1
+        );
 
+        const speed = cipherRound(
+            cipherRandom(2.5, 5.5),
+            1
+        );
 
-/* =========================================
-   MISSION 4 — THE FINAL CIPHER
-   ADVANCED EVIDENCE INVESTIGATION
-========================================= */
+        const time = cipherRound(
+            cipherRandom(0.8, 1.8),
+            1
+        );
+
+        const travelLimit = cipherRound(
+            speed * time,
+            2
+        );
+
+        const elevationMin =
+            Math.round(
+                cipherRandom(450, 1250) / 50
+            ) * 50;
+
+        const elevationMax =
+            elevationMin +
+            Math.round(
+                cipherRandom(200, 450) / 50
+            ) * 50;
+
+        const correctRadius = cipherRandom(
+            0.8,
+            Math.min(2.7, travelLimit - 0.3)
+        );
+
+        const correctPoint = cipherDestination(
+            origin,
+            correctRadius,
+            bearing
+        );
+
+        const tower = cipherDestination(
+            correctPoint,
+            cipherRandom(
+                0.7,
+                Math.min(2.1, signalLimit - 0.3)
+            ),
+            bearing + cipherRandom(50, 130)
+        );
+
+        const farPoint = cipherDestination(
+            origin,
+            Math.max(
+                travelLimit + 1.6,
+                correctRadius + 4.5
+            ),
+            bearing + cipherRandom(-25, 25)
+        );
+
+        const terrainPoint = cipherDestination(
+            origin,
+            cipherRandom(
+                0.7,
+                Math.min(2.3, travelLimit - 0.3)
+            ),
+            bearing + 160 + cipherRandom(-20, 20)
+        );
+
+        const allPoints = [
+            correctPoint,
+            farPoint,
+            terrainPoint,
+            tower
+        ];
+
+        if (!allPoints.every(cipherInsideTurkey)) {
+            continue;
+        }
+
+        if (
+            cipherKm(farPoint, tower) <=
+            signalLimit + 0.3
+        ) {
+            continue;
+        }
+
+        if (
+            cipherKm(
+                terrainPoint,
+                correctPoint
+            ) < 0.8
+        ) {
+            continue;
+        }
+
+        const correctElevation = Math.round(
+            cipherRandom(
+                elevationMin + 30,
+                elevationMax - 30
+            )
+        );
+
+        const farElevation =
+            elevationMax +
+            Math.round(cipherRandom(100, 350));
+
+        const terrainElevation =
+            elevationMin -
+            Math.round(cipherRandom(100, 350));
+
+        const candidates = cipherShuffle([
+            {
+                point: correctPoint,
+                elevation: correctElevation,
+                correct: true
+            },
+            {
+                point: farPoint,
+                elevation: farElevation,
+                correct: false
+            },
+            {
+                point: terrainPoint,
+                elevation: terrainElevation,
+                correct: false
+            }
+        ]);
+
+        candidates.forEach(
+            (candidate, index) => {
+                candidate.label =
+                    ["A", "B", "C"][index];
+
+                candidate.signalDistance = cipherKm(
+                    candidate.point,
+                    tower
+                );
+
+                candidate.travelDistance = cipherKm(
+                    candidate.point,
+                    origin
+                );
+            }
+        );
+
+        const scenario = {
+            origin,
+            tower,
+            candidates,
+            signalLimit,
+            elevationMin,
+            elevationMax,
+            speed,
+            time,
+            travelLimit
+        };
+
+        const valid = candidates.filter(
+            candidate =>
+                cipherFinalPasses(
+                    candidate,
+                    "signal",
+                    scenario
+                ) &&
+                cipherFinalPasses(
+                    candidate,
+                    "terrain",
+                    scenario
+                ) &&
+                cipherFinalPasses(
+                    candidate,
+                    "timeline",
+                    scenario
+                )
+        );
+
+        if (
+            valid.length === 1 &&
+            valid[0].correct
+        ) {
+            return scenario;
+        }
+    }
+
+    throw new Error(
+        "Could not generate a unique final solution."
+    );
+}
+
+function cipherFinalPasses(
+    candidate,
+    evidence,
+    scenario = cipherGame.finalMission
+) {
+    if (!scenario) return false;
+
+    const tolerance = 1e-8;
+
+    if (evidence === "signal") {
+        return (
+            candidate.signalDistance <=
+            scenario.signalLimit + tolerance
+        );
+    }
+
+    if (evidence === "terrain") {
+        return (
+            candidate.elevation >=
+                scenario.elevationMin &&
+            candidate.elevation <=
+                scenario.elevationMax
+        );
+    }
+
+    if (evidence === "timeline") {
+        return (
+            candidate.travelDistance <=
+            scenario.travelLimit + tolerance
+        );
+    }
+
+    return false;
+}
+
+/* =========================================================
+   MISSION 4 — INITIALIZATION
+========================================================= */
 
 function startCipherMission4() {
-    cipherGame.stage = 4;
-    cipherGame.finished = false;
+    if (
+        cipherGame.timedOut ||
+        cipherGame.stage !== 3 ||
+        !cipherGame.finished
+    ) return;
 
     const previous = cipherGame.overlayMission;
 
-    if (!previous) {
-        console.error("Mission 3 data is missing.");
-        return;
-    }
-
-    const previousCorrect = previous.candidates.find(
+    const correct = previous.candidates.find(
         candidate => candidate.correct
     );
 
-    if (!previousCorrect) return;
+    let scenario;
 
-    const origin = previousCorrect.point;
-
-    // Build a new mystery near the location
-    // discovered in Mission 3.
-    const scenario = generateCipherFinalScenario(origin);
-
-    if (!scenario) {
-        document.getElementById("feedback").textContent =
-            "Could not generate the final investigation. Please restart the chapter.";
+    try {
+        scenario = generateCipherFinalScenario(
+            correct.point
+        );
+    } catch (error) {
+        cipherFeedback(error.message);
         return;
     }
+
+    cipherGame.stage = 4;
+    cipherGame.finished = false;
 
     cipherGame.finalMission = {
         ...scenario,
         selectedEvidence: null,
         connections: new Set(),
-        selectedCandidate: null,
         graphReady: false,
-        completed: false
+        completed: false,
+        finished: false
     };
 
-    document.getElementById("stage-number").textContent =
-        "MISSION 04 / 04";
+    cipherMissionInfo(
+        4,
+        "The Final Cipher",
+        "Three possible hideouts remain. Analyze signal, terrain and timeline evidence.",
+        "Connect every evidence node to all matching candidates."
+    );
 
-    document.getElementById("mission-title").textContent =
-        "The Final Cipher";
-
-    document.getElementById("mission-description").textContent =
-        "Three possible hideouts remain. Analyze signal strength, terrain elevation and travel time to identify the researcher's final location.";
-
-    document.getElementById("mission-objective").textContent =
-        "Connect each evidence node to every candidate that satisfies its condition. Then identify the only candidate supported by all three clues.";
-
-    document.getElementById("feedback").textContent = "";
-
-    updateCipherTimeline(4);
-    updateCipherEvidence(3);
-
-    document.getElementById("evidence-documents").innerHTML = `
+    cipherHTML("evidence-documents", `
         <div class="document-card">
-            <h4>FINAL CASE FILE</h4>
+            <h4>📡 SIGNAL EVIDENCE</h4>
+
             <p>
-                The researcher may be hiding at one
-                of three locations: A, B or C.
-            </p>
-            <p>
-                Each location has a different
-                combination of spatial properties.
+                Maximum tower distance:
+                <strong>
+                    ${scenario.signalLimit.toFixed(1)} km
+                </strong>
             </p>
         </div>
 
         <div class="document-card">
-            <h4>SIGNAL EVIDENCE</h4>
-            <p>
-                The final location is no more than
-                <strong>4.5 km</strong> from the
-                communication tower.
-            </p>
-        </div>
+            <h4>⛰️ TERRAIN EVIDENCE</h4>
 
-        <div class="document-card">
-            <h4>TERRAIN EVIDENCE</h4>
             <p>
-                The final location has an elevation
-                between <strong>700 m and 900 m</strong>.
+                Required elevation:
+                <strong>
+                    ${scenario.elevationMin}–${scenario.elevationMax} m
+                </strong>
             </p>
+
             <p>
                 Elevations are simulated case data.
             </p>
         </div>
 
         <div class="document-card">
-            <h4>TIMELINE EVIDENCE</h4>
+            <h4>⏱️ TIMELINE EVIDENCE</h4>
+
             <p>
-                The researcher traveled from the
-                previous meeting point.
+                Maximum speed:
+                <strong>
+                    ${scenario.speed.toFixed(1)} km/h
+                </strong>
             </p>
+
             <p>
-                Maximum speed: <strong>3 km/h</strong>
+                Available time:
+                <strong>
+                    ${scenario.time.toFixed(1)} hours
+                </strong>
             </p>
+
             <p>
-                Available time: <strong>1.5 hours</strong>
-            </p>
-            <p>
-                Maximum straight-line distance:
-                <strong>4.5 km</strong>
+                Maximum distance:
+                <strong>
+                    ${scenario.travelLimit.toFixed(2)} km
+                </strong>
             </p>
         </div>
-    `;
+    `);
 
-    document.getElementById("mission-actions").innerHTML = `
+    const candidateRows =
+        scenario.candidates.map(candidate => `
+            <tr style="
+                border-bottom:1px solid #34445f
+            ">
+                <td style="padding:12px;font-weight:bold">
+                    ${candidate.label}
+                </td>
+
+                <td style="padding:12px">
+                    ${candidate.signalDistance.toFixed(2)} km
+                </td>
+
+                <td style="padding:12px">
+                    ${candidate.elevation} m
+                </td>
+
+                <td style="padding:12px">
+                    ${candidate.travelDistance.toFixed(2)} km
+                </td>
+            </tr>
+        `).join("");
+
+    cipherHTML("mission-actions", `
         <div class="selection-info">
             INTERACTIVE EVIDENCE NETWORK
         </div>
 
-        <p>
-            Click an evidence node, then click
-            every candidate that matches it.
-            Click a connection again to remove it.
-        </p>
+        <div class="document-card">
+            <h4>EVIDENCE CONDITIONS</h4>
+
+            <p>
+                📡 SIGNAL:
+                Tower distance ≤
+                ${scenario.signalLimit.toFixed(1)} km
+            </p>
+
+            <p>
+                ⛰️ TERRAIN:
+                Elevation
+                ${scenario.elevationMin}–${scenario.elevationMax} m
+            </p>
+
+            <p>
+                ⏱️ TIMELINE:
+                Travel distance ≤
+                ${scenario.travelLimit.toFixed(2)} km
+            </p>
+        </div>
+
+        <div class="document-card">
+            <h4>CANDIDATE DATA</h4>
+
+            <div style="overflow-x:auto">
+                <table style="
+                    width:100%;
+                    color:white;
+                    border-collapse:collapse;
+                    text-align:left;
+                ">
+                    <thead>
+                        <tr style="
+                            border-bottom:1px solid #64748b
+                        ">
+                            <th style="padding:12px">
+                                Candidate
+                            </th>
+
+                            <th style="padding:12px">
+                                Signal
+                            </th>
+
+                            <th style="padding:12px">
+                                Terrain
+                            </th>
+
+                            <th style="padding:12px">
+                                Timeline
+                            </th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        ${candidateRows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="document-card">
+            <h4>HOW TO PLAY</h4>
+
+            <p>
+                1. Compare the candidate data
+                with the evidence conditions.
+            </p>
+
+            <p>
+                2. Click SIGNAL, TERRAIN or TIMELINE.
+            </p>
+
+            <p>
+                3. Connect the evidence to every
+                candidate satisfying its condition.
+            </p>
+
+            <p>
+                4. Click a connected candidate again
+                to remove the connection.
+            </p>
+
+            <p>
+                5. Press ANALYZE CONNECTIONS.
+            </p>
+        </div>
 
         <div
             id="cipher-final-network"
@@ -1733,67 +2097,71 @@ function startCipherMission4() {
                 border:1px solid #34445f;
                 border-radius:12px;
                 overflow:hidden;
+                margin-top:16px;
             "
         ></div>
 
         <div
             id="cipher-final-network-info"
             class="document-card"
-            style="margin-top:12px;"
+            style="margin-top:12px"
         >
             Select SIGNAL, TERRAIN or TIMELINE.
         </div>
 
-        <div
-            id="cipher-final-progress"
-            style="margin-top:12px;"
-        ></div>
+        <div id="cipher-final-progress"></div>
 
-        <div
-            id="cipher-final-decision"
-            style="margin-top:16px;"
-        ></div>
-    `;
+        <div id="cipher-final-decision"></div>
+    `);
 
     cipherGame.layer.clearLayers();
 
-    const tower = scenario.tower;
-    const start = scenario.origin;
+    cipherMarker(
+        scenario.tower,
+        "T",
+        "#f4c76a"
+    ).bindPopup("COMMUNICATION TOWER");
 
-    L.marker(tower, {
-        icon: makeCipherNumberIcon("T", "#f4c76a")
-    })
-        .addTo(cipherGame.layer)
-        .bindPopup("COMMUNICATION TOWER");
-
-    L.marker(start, {
-        icon: makeCipherNumberIcon("S", "#5fc9d7")
-    })
-        .addTo(cipherGame.layer)
-        .bindPopup("PREVIOUS MEETING POINT");
+    cipherMarker(
+        scenario.origin,
+        "S",
+        "#5fc9d7"
+    ).bindPopup("PREVIOUS MEETING POINT");
 
     scenario.candidates.forEach(candidate => {
-        L.marker(candidate.point, {
-            icon: makeCipherNumberIcon(
-                candidate.label,
-                "#ffffff"
-            )
-        })
-            .addTo(cipherGame.layer)
-            .bindPopup(
-                `CANDIDATE ${candidate.label}<br>
-                 Elevation: ${candidate.elevation} m`
-            );
+        cipherMarker(
+            candidate.point,
+            candidate.label,
+            "#e2e8f0"
+        ).bindPopup(`
+            <strong>
+                CANDIDATE ${candidate.label}
+            </strong>
+
+            <br>
+            Signal:
+            ${candidate.signalDistance.toFixed(2)} km
+
+            <br>
+            Terrain:
+            ${candidate.elevation} m
+
+            <br>
+            Timeline:
+            ${candidate.travelDistance.toFixed(2)} km
+        `);
     });
 
     cipherGame.map.fitBounds(
         [
-            tower,
-            start,
-            ...scenario.candidates.map(c => c.point)
+            scenario.tower,
+            scenario.origin,
+            ...scenario.candidates.map(
+                c => c.point
+            )
         ],
         {
-            padding: [45, 45],
+            padding: [40, 40],
             maxZoom: 11
         }
     );
@@ -1801,173 +2169,24 @@ function startCipherMission4() {
     createCipherFinalNetwork();
 }
 
-
-/* =========================================
-   GENERATE FINAL SCENARIO
-========================================= */
-
-function generateCipherFinalScenario(origin) {
-
-    const originFeature = turf.point([
-        origin[1],
-        origin[0]
-    ]);
-
-    function destination(distance, bearing) {
-        const result = turf.destination(
-            originFeature,
-            distance,
-            bearing,
-            { units: "kilometers" }
-        );
-
-        return [
-            result.geometry.coordinates[1],
-            result.geometry.coordinates[0]
-        ];
-    }
-
-    // Rotate the scenario randomly so that
-    // the same compass directions do not
-    // always reveal the answer.
-
-    for (let attempt = 0; attempt < 360; attempt++) {
-
-        const angle = Math.random() * 360;
-
-        const correctPoint = destination(
-            2,
-            angle
-        );
-
-        const signalOnlyPoint = destination(
-            7,
-            angle
-        );
-
-        const terrainTimelinePoint = destination(
-            3,
-            (angle + 180) % 360
-        );
-
-        const tower = destination(
-            4,
-            angle
-        );
-
-        const points = [
-            correctPoint,
-            signalOnlyPoint,
-            terrainTimelinePoint,
-            tower
-        ];
-
-        if (!points.every(point =>
-            CipherCase.isInsideTurkey(...point)
-        )) {
-            continue;
-        }
-
-        const candidates = [
-            {
-                point: correctPoint,
-                elevation: 780,
-                correct: true
-            },
-            {
-                point: signalOnlyPoint,
-                elevation: 1150,
-                correct: false
-            },
-            {
-                point: terrainTimelinePoint,
-                elevation: 820,
-                correct: false
-            }
-        ];
-
-        // Randomize labels.
-        for (let i = candidates.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-
-            [candidates[i], candidates[j]] =
-                [candidates[j], candidates[i]];
-        }
-
-        candidates.forEach((candidate, index) => {
-            candidate.label = ["A", "B", "C"][index];
-
-            candidate.signalDistance =
-                cipherDistance(
-                    candidate.point[0],
-                    candidate.point[1],
-                    tower[0],
-                    tower[1]
-                ) / 1000;
-
-            candidate.travelDistance =
-                cipherDistance(
-                    candidate.point[0],
-                    candidate.point[1],
-                    origin[0],
-                    origin[1]
-                ) / 1000;
-        });
-
-        return {
-            origin,
-            tower,
-            candidates
-        };
-    }
-
-    return null;
-}
-
-
-/* =========================================
-   EVIDENCE RULES
-========================================= */
-
-function cipherFinalPasses(candidate, evidence) {
-
-    if (evidence === "signal") {
-        return candidate.signalDistance <= 4.5;
-    }
-
-    if (evidence === "terrain") {
-        return (
-            candidate.elevation >= 700 &&
-            candidate.elevation <= 900
-        );
-    }
-
-    if (evidence === "timeline") {
-        return candidate.travelDistance <= 4.5;
-    }
-
-    return false;
-}
-
-
-/* =========================================
-   D3.JS EVIDENCE NETWORK
-========================================= */
+/* =========================================================
+   MISSION 4 — D3 EVIDENCE NETWORK
+========================================================= */
 
 function createCipherFinalNetwork() {
+    const container = cipherEl(
+        "cipher-final-network"
+    );
+
+    if (!container) return;
 
     if (typeof d3 === "undefined") {
-        document.getElementById(
-            "cipher-final-network"
-        ).textContent = "D3.js could not be loaded.";
+        container.textContent =
+            "D3.js could not be loaded.";
         return;
     }
 
     const mission = cipherGame.finalMission;
-
-    const container = document.getElementById(
-        "cipher-final-network"
-    );
 
     const width = Math.max(
         container.clientWidth,
@@ -1976,70 +2195,73 @@ function createCipherFinalNetwork() {
 
     const height = 350;
 
+    container.innerHTML = "";
+
     const svg = d3.select(container)
         .append("svg")
         .attr("width", "100%")
         .attr("height", "100%")
-        .attr("viewBox", `0 0 ${width} ${height}`);
+        .attr(
+            "viewBox",
+            `0 0 ${width} ${height}`
+        );
 
     const evidenceNodes = [
         {
             id: "signal",
             label: "SIGNAL",
-            x: width * 0.20,
+            x: width * 0.2,
             y: 75
         },
         {
             id: "terrain",
             label: "TERRAIN",
-            x: width * 0.50,
+            x: width * 0.5,
             y: 75
         },
         {
             id: "timeline",
             label: "TIMELINE",
-            x: width * 0.80,
+            x: width * 0.8,
             y: 75
         }
     ];
 
     const candidateNodes =
-        mission.candidates.map((candidate, index) => ({
-            id: candidate.label,
-            label: candidate.label,
-            x: width * (0.20 + index * 0.30),
-            y: 265
-        }));
+        mission.candidates.map(
+            (candidate, index) => ({
+                id: candidate.label,
+                label: candidate.label,
+                x: width * (0.2 + index * 0.3),
+                y: 265
+            })
+        );
 
-    const connectionLayer = svg.append("g")
-        .attr("class", "cipher-connections");
+    const lines = svg.append("g")
+        .attr("class", "cipher-network-lines")
+        .style("pointer-events", "none");
 
     function drawConnections() {
+        const data = [...mission.connections].map(
+            key => {
+                const [evidence, candidate] =
+                    key.split(":");
 
-        const data = Array.from(
-            mission.connections
-        ).map(key => {
+                return {
+                    key,
 
-            const [evidence, candidate] =
-                key.split(":");
+                    source: evidenceNodes.find(
+                        node => node.id === evidence
+                    ),
 
-            const source = evidenceNodes.find(
-                node => node.id === evidence
-            );
+                    target: candidateNodes.find(
+                        node => node.id === candidate
+                    )
+                };
+            }
+        );
 
-            const target = candidateNodes.find(
-                node => node.id === candidate
-            );
-
-            return {
-                key,
-                source,
-                target
-            };
-        });
-
-        connectionLayer
-            .selectAll("line")
+        lines.selectAll("line")
             .data(data, d => d.key)
             .join("line")
             .attr("x1", d => d.source.x)
@@ -2048,7 +2270,7 @@ function createCipherFinalNetwork() {
             .attr("y2", d => d.target.y)
             .attr("stroke", "#59c987")
             .attr("stroke-width", 3)
-            .attr("stroke-opacity", 0.85);
+            .attr("stroke-opacity", 0.9);
     }
 
     const evidenceGroup = svg.append("g")
@@ -2089,8 +2311,8 @@ function createCipherFinalNetwork() {
         .style("cursor", "pointer");
 
     candidateGroup.append("circle")
-        .attr("r", 31)
-        .attr("fill", "#f4c76a")
+        .attr("r", 30)
+        .attr("fill", "#34445f")
         .attr("stroke", "#ffffff")
         .attr("stroke-width", 2);
 
@@ -2098,141 +2320,137 @@ function createCipherFinalNetwork() {
         .text(d => d.label)
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
-        .attr("fill", "#142338")
+        .attr("fill", "#ffffff")
         .attr("font-size", 17)
         .attr("font-weight", "bold")
         .style("pointer-events", "none");
 
-    evidenceGroup.on("click", function(event, d) {
+    evidenceGroup.on(
+        "click",
+        (event, node) => {
+            if (
+                !cipherActive(4) ||
+                mission.graphReady
+            ) return;
 
-        mission.selectedEvidence = d.id;
+            mission.selectedEvidence = node.id;
 
-        evidenceGroup.selectAll("circle")
-            .attr("fill", node =>
-                node.id === d.id
-                    ? "#5fc9d7"
-                    : "#233b59"
+            evidenceGroup.select("circle")
+                .attr(
+                    "stroke",
+                    d =>
+                        d.id === node.id
+                            ? "#f4c76a"
+                            : "#ffffff"
+                )
+                .attr(
+                    "stroke-width",
+                    d =>
+                        d.id === node.id
+                            ? 4
+                            : 2
+                );
+
+            const messages = {
+                signal:
+                    `SIGNAL selected — Connect every candidate within ${mission.signalLimit.toFixed(1)} km of the tower.`,
+
+                terrain:
+                    `TERRAIN selected — Connect every candidate with elevation between ${mission.elevationMin} and ${mission.elevationMax} m.`,
+
+                timeline:
+                    `TIMELINE selected — Connect every candidate within ${mission.travelLimit.toFixed(2)} km of the previous location.`
+            };
+
+            cipherSet(
+                "cipher-final-network-info",
+                messages[node.id]
             );
-
-        showCipherFinalEvidenceInfo(d.id);
-    });
-
-    candidateGroup.on("click", function(event, d) {
-
-        if (!mission.selectedEvidence) {
-            document.getElementById(
-                "cipher-final-network-info"
-            ).textContent =
-                "Select an evidence node first.";
-            return;
         }
+    );
 
-        const key =
-            `${mission.selectedEvidence}:${d.id}`;
+    candidateGroup.on(
+        "click",
+        (event, node) => {
+            if (
+                !cipherActive(4) ||
+                mission.graphReady
+            ) return;
 
-        if (mission.connections.has(key)) {
-            mission.connections.delete(key);
-        } else {
-            mission.connections.add(key);
+            if (!mission.selectedEvidence) {
+                cipherSet(
+                    "cipher-final-network-info",
+                    "Select an evidence node first."
+                );
+                return;
+            }
+
+            const key =
+                `${mission.selectedEvidence}:${node.id}`;
+
+            if (mission.connections.has(key)) {
+                mission.connections.delete(key);
+            } else {
+                mission.connections.add(key);
+            }
+
+            drawConnections();
+            updateCipherFinalProgress();
+
+            cipherSet(
+                "cipher-final-network-info",
+                `${mission.selectedEvidence.toUpperCase()} → ` +
+                `Candidate ${node.id}. ` +
+                `${mission.connections.size} connection(s) created.`
+            );
         }
+    );
 
-        drawConnections();
-        updateCipherFinalProgress();
-    });
-
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", 155)
-        .attr("text-anchor", "middle")
-        .attr("fill", "#9fb3ce")
-        .attr("font-size", 11)
-        .text("CONNECT EVIDENCE TO CANDIDATES");
-
-    mission.graphReady = true;
     updateCipherFinalProgress();
 }
 
-
-/* =========================================
-   EVIDENCE INFORMATION
-========================================= */
-
-function showCipherFinalEvidenceInfo(evidence) {
-
-    const mission = cipherGame.finalMission;
-
-    const rows = mission.candidates.map(candidate => {
-
-        let value = "";
-
-        if (evidence === "signal") {
-            value =
-                `${candidate.signalDistance.toFixed(2)} km`;
-        }
-
-        if (evidence === "terrain") {
-            value = `${candidate.elevation} m`;
-        }
-
-        if (evidence === "timeline") {
-            value =
-                `${candidate.travelDistance.toFixed(2)} km`;
-        }
-
-        return `
-            <tr>
-                <td>${candidate.label}</td>
-                <td>${value}</td>
-            </tr>
-        `;
-    }).join("");
-
-    const descriptions = {
-        signal:
-            "Which candidates are within 4.5 km of the communication tower?",
-
-        terrain:
-            "Which candidates have an elevation between 700 m and 900 m?",
-
-        timeline:
-            "Which candidates are within 4.5 km of the previous meeting point?"
-    };
-
-    document.getElementById(
-        "cipher-final-network-info"
-    ).innerHTML = `
-        <h4>${evidence.toUpperCase()} ANALYSIS</h4>
-
-        <p>${descriptions[evidence]}</p>
-
-        <table style="
-            width:100%;
-            color:#ffffff;
-            text-align:left;
-        ">
-            <thead>
-                <tr>
-                    <th>LOCATION</th>
-                    <th>VALUE</th>
-                </tr>
-            </thead>
-
-            <tbody>${rows}</tbody>
-        </table>
-
-        <p>
-            Connect this evidence to every
-            candidate that satisfies the condition.
-        </p>
-    `;
-}
-
-
-/* =========================================
-   CHECK NETWORK CONNECTIONS
-========================================= */
+/* =========================================================
+   MISSION 4 — CONNECTION PROGRESS
+========================================================= */
 
 function updateCipherFinalProgress() {
+    const mission = cipherGame.finalMission;
+
+    if (!mission || mission.graphReady) return;
+
+    cipherHTML("cipher-final-progress", `
+        <div class="document-card">
+            <p>
+                CONNECTIONS CREATED:
+                <strong>
+                    ${mission.connections.size}
+                </strong>
+            </p>
+
+            <button
+                class="primary-btn"
+                id="cipher-analyze-connections"
+                type="button"
+                style="width:100%"
+            >
+                ANALYZE CONNECTIONS
+            </button>
+        </div>
+    `);
+
+    cipherEl("cipher-analyze-connections")
+        .addEventListener(
+            "click",
+            analyzeCipherFinalConnections
+        );
+}
+
+/* =========================================================
+   MISSION 4 — ANALYZE CONNECTIONS
+========================================================= */
+
+function analyzeCipherFinalConnections() {
+    if (!cipherActive(4)) return;
 
     const mission = cipherGame.finalMission;
 
@@ -2242,209 +2460,152 @@ function updateCipherFinalProgress() {
         "timeline"
     ];
 
-    const required = new Set();
+    const expected = new Set();
 
-    evidenceTypes.forEach(evidence => {
-
+    evidenceTypes.forEach(type => {
         mission.candidates.forEach(candidate => {
-
-            if (cipherFinalPasses(candidate, evidence)) {
-                required.add(
-                    `${evidence}:${candidate.label}`
+            if (
+                cipherFinalPasses(
+                    candidate,
+                    type,
+                    mission
+                )
+            ) {
+                expected.add(
+                    `${type}:${candidate.label}`
                 );
             }
         });
     });
 
-    const correctConnections =
-        [...mission.connections].filter(
-            key => required.has(key)
-        ).length;
+    const correct =
+        mission.connections.size === expected.size &&
+        [...expected].every(
+            key => mission.connections.has(key)
+        );
 
-    const wrongConnections =
-        [...mission.connections].filter(
-            key => !required.has(key)
-        ).length;
+    if (!correct) {
+        cipherFeedback(
+            "Some connections are missing or incorrect. Review the candidate data."
+        );
 
-    const completed =
-        correctConnections === required.size &&
-        wrongConnections === 0;
-
-    const progress = document.getElementById(
-        "cipher-final-progress"
-    );
-
-    progress.innerHTML = `
-        <div class="selection-info">
-            CONNECTIONS:
-            ${mission.connections.size}
-            / ${required.size}
-        </div>
-
-        <button
-            class="primary-btn"
-            id="cipher-check-network"
-            type="button"
-        >
-            ANALYZE CONNECTIONS
-        </button>
-    `;
-
-    document.getElementById("cipher-check-network")
-        .addEventListener("click", () => {
-
-            if (!completed) {
-
-                document.getElementById(
-                    "feedback"
-                ).textContent =
-                    "Some evidence connections are missing or incorrect. Review the spatial measurements.";
-
-                return;
-            }
-
-            document.getElementById(
-                "feedback"
-            ).textContent =
-                "Evidence network solved! One candidate satisfies all three conditions.";
-
-            unlockCipherFinalDecision();
-        });
-}
-
-
-/* =========================================
-   UNLOCK FINAL DECISION
-========================================= */
-
-function unlockCipherFinalDecision() {
-
-    const mission = cipherGame.finalMission;
-
-    const container = document.getElementById(
-        "cipher-final-decision"
-    );
-
-    container.innerHTML = `
-        <div class="selection-info">
-            ✓ EVIDENCE NETWORK COMPLETED
-        </div>
-
-        <p>
-            Which location satisfies
-            all three conditions?
-        </p>
-
-        <div style="
-            display:flex;
-            gap:10px;
-            flex-wrap:wrap;
-        ">
-            ${mission.candidates.map(candidate => `
-                <button
-                    class="primary-btn"
-                    type="button"
-                    data-final-candidate="${candidate.label}"
-                >
-                    LOCATION ${candidate.label}
-                </button>
-            `).join("")}
-        </div>
-
-        <div
-            id="cipher-final-result"
-            style="margin-top:12px;"
-        ></div>
-    `;
-
-    container.querySelectorAll(
-        "[data-final-candidate]"
-    ).forEach(button => {
-
-        button.addEventListener("click", () => {
-
-            const label =
-                button.dataset.finalCandidate;
-
-            verifyCipherFinalLocation(label);
-        });
-    });
-}
-
-
-/* =========================================
-   VERIFY FINAL ANSWER
-========================================= */
-
-function verifyCipherFinalLocation(label) {
-
-    const mission = cipherGame.finalMission;
-
-    if (!mission || mission.finished) return;
-
-    const candidate = mission.candidates.find(
-        candidate => candidate.label === label
-    );
-
-    if (!candidate) return;
-
-    const valid = [
-        "signal",
-        "terrain",
-        "timeline"
-    ].every(evidence =>
-        cipherFinalPasses(candidate, evidence)
-    );
-
-    if (!valid) {
-
-        document.getElementById(
-            "cipher-final-result"
-        ).textContent =
-            "Incorrect location. Review the evidence connections.";
+        cipherSet(
+            "cipher-final-network-info",
+            "Check every evidence condition and correct the connections."
+        );
 
         return;
     }
 
+    mission.graphReady = true;
+
+    cipherFeedback(
+        "Evidence network verified! Identify the final hideout."
+    );
+
+    cipherHTML("cipher-final-progress", `
+        <div class="selection-info">
+            ✓ EVIDENCE NETWORK VERIFIED
+        </div>
+    `);
+
+    cipherHTML("cipher-final-decision", `
+        <div class="document-card">
+            <h4>FINAL DECISION</h4>
+
+            <p>
+                Which candidate satisfies
+                all three evidence conditions?
+            </p>
+
+            <div id="cipher-final-options"></div>
+        </div>
+    `);
+
+    const options = cipherEl(
+        "cipher-final-options"
+    );
+
+    mission.candidates.forEach(candidate => {
+        const button = document.createElement(
+            "button"
+        );
+
+        button.className = "primary-btn";
+        button.type = "button";
+
+        button.textContent =
+            `CANDIDATE ${candidate.label}`;
+
+        button.style.margin = "5px";
+
+        button.addEventListener(
+            "click",
+            () => {
+                verifyCipherFinalLocation(
+                    candidate.label
+                );
+            }
+        );
+
+        options.appendChild(button);
+    });
+}
+
+/* =========================================================
+   MISSION 4 — FINAL DECISION
+========================================================= */
+
+function verifyCipherFinalLocation(label) {
+    if (!cipherActive(4)) return;
+
+    const mission = cipherGame.finalMission;
+
+    if (!mission.graphReady) return;
+
+    const candidate = mission.candidates.find(
+        item => item.label === label
+    );
+
+    if (!candidate) return;
+
+    if (!candidate.correct) {
+        cipherFeedback(
+            "Incorrect final location. Review all three clues."
+        );
+        return;
+    }
+
     mission.finished = true;
-    cipherGame.finished = true;
+    mission.completed = true;
 
-    document.getElementById(
-        "progress-text"
-    ).textContent = "4 / 4";
+    cipherComplete(
+        4,
+        "Excellent detective work! The final cipher has been solved.",
+        null
+    );
 
-    document.getElementById(
-        "progress-fill"
-    ).style.width = "100%";
+    cipherSet(
+        "stage-number",
+        "CASE COMPLETED"
+    );
 
-    updateCipherEvidence(4);
+    cipherSet(
+        "mission-title",
+        "CASE SOLVED"
+    );
 
-    document.getElementById(
-        "stage-number"
-    ).textContent = "CASE COMPLETED";
+    cipherSet(
+        "mission-description",
+        "You identified the researcher's final location."
+    );
 
-    document.getElementById(
-        "mission-title"
-    ).textContent = "CASE SOLVED";
+    cipherSet(
+        "mission-objective",
+        "All four missions completed."
+    );
 
-    document.getElementById(
-        "mission-description"
-    ).textContent =
-        "You successfully connected the evidence and identified the researcher's final location.";
-
-    document.getElementById(
-        "mission-objective"
-    ).textContent =
-        "All four missions completed.";
-
-    document.getElementById(
-        "feedback"
-    ).textContent =
-        "Excellent detective work! The final cipher has been solved.";
-
-    document.getElementById(
-        "mission-actions"
-    ).innerHTML = `
+    cipherHTML("mission-actions", `
         <div class="selection-info">
             🏆 THE COORDINATE CIPHER — SOLVED
         </div>
@@ -2456,39 +2617,54 @@ function verifyCipherFinalLocation(label) {
 
         <p>
             Final location:
-            <strong>${candidate.label}</strong>
+            <strong>
+                Candidate ${candidate.label}
+            </strong>
         </p>
 
         <p>
-            You solved the investigation by combining
-            spatial measurements and evidence relationships.
+            Remaining time:
+            <strong>
+                ${String(
+                    Math.floor(cipherTimeLeft / 60)
+                ).padStart(2, "0")}:
+                ${String(
+                    cipherTimeLeft % 60
+                ).padStart(2, "0")}
+            </strong>
         </p>
-    `;
+    `);
 
     cipherGame.layer.clearLayers();
 
-    L.marker(candidate.point)
-        .addTo(cipherGame.layer)
-        .bindPopup(
-            "<strong>FINAL LOCATION DISCOVERED</strong>"
-        )
-        .openPopup();
+    cipherMarker(
+        candidate.point,
+        "✓",
+        "#59c987"
+    )
+    .bindPopup("FINAL LOCATION DISCOVERED")
+    .openPopup();
 
     cipherGame.map.flyTo(
         candidate.point,
-        12,
-        { duration: 1.5 }
+        12
     );
 }
 
+/* =========================================================
+   STOP INVESTIGATION
+========================================================= */
 
 function stopCipherInvestigation() {
-    cipherGame.finished = true;
+    cipherSession++;
 
-    if (
-        cipherGame.distanceMission &&
-        cipherGame.distanceMission.chart
-    ) {
+    stopCipherTimer();
+
+    cipherGame.finished = true;
+    cipherGame.timedOut = true;
+    cipherGame.stage = 0;
+
+    if (cipherGame.distanceMission?.chart) {
         cipherGame.distanceMission.chart.destroy();
         cipherGame.distanceMission.chart = null;
     }
@@ -2497,4 +2673,13 @@ function stopCipherInvestigation() {
         cipherGame.map.remove();
         cipherGame.map = null;
     }
+
+    cipherGame.layer = null;
+    cipherGame.distanceMission = null;
+    cipherGame.overlayMission = null;
+    cipherGame.finalMission = null;
 }
+
+/* =========================================================
+   END OF THE COORDINATE CIPHER
+========================================================= */
