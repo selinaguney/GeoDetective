@@ -972,3 +972,62 @@ main {
 .museum-camera-marker svg {
     pointer-events: auto;
 }
+
+/* =========================================
+   CHAPTER 3 — COORDINATE FORM
+========================================= */
+
+.cipher-coordinate-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+}
+
+.cipher-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.cipher-input-group label {
+    color: #d6e2f1;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.cipher-input-group input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 12px;
+    background: #16283d;
+    border: 1px solid #526780;
+    border-radius: 10px;
+    color: #ffffff;
+    font-size: 15px;
+    outline: none;
+}
+
+.cipher-input-group input::placeholder {
+    color: #91a0b3;
+}
+
+.cipher-input-group input:focus {
+    border-color: #d9b979;
+    box-shadow: 0 0 0 3px rgba(217, 185, 121, 0.15);
+}
+
+.cipher-verify-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 4px;
+    border-radius: 10px;
+}
+
+@media (max-width: 600px) {
+    .cipher-coordinate-form {
+        grid-template-columns: 1fr;
+    }
+}

@@ -491,7 +491,7 @@ const MuseumCase = (() => {
 
 const museumGame = {
     stage: 0,
-    seconds: 420,
+    seconds: 240,
     interval: null,
     scenario: null,
     selectedCamera: null,
@@ -862,6 +862,7 @@ function createMuseumCameraIcon(camera) {
    MAP INITIALIZATION
 ========================================================= */
 
+
 function initializeMuseumMap() {
 
     if (museumGame.map) {
@@ -879,16 +880,22 @@ function initializeMuseumMap() {
 
     const museum = museumGame.scenario.museum;
 
-    museumGame.map = L.map("map").setView(
-        museum.point,
-        17
-    );
+    museumGame.map = L.map("map", {
+        maxBounds: [
+            [39.65, 32.45],
+            [40.15, 33.25]
+        ],
+        maxBoundsViscosity: 1.0,
+        minZoom: 10,
+        maxZoom: 19
+    }).setView(museum.point, 17);
 
     L.tileLayer(
         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
             attribution: "&copy; OpenStreetMap contributors",
-            maxZoom: 19
+            maxZoom: 19,
+            noWrap: true
         }
     ).addTo(museumGame.map);
 
@@ -913,7 +920,7 @@ function startMuseumInvestigation() {
     stopMuseumInvestigation();
 
     museumGame.stage = 0;
-    museumGame.seconds = 420;
+    museumGame.seconds = 240;
     museumGame.scenario = MuseumCase.generateScenario();
 
     museumGame.selectedCamera = null;

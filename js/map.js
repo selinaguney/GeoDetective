@@ -327,16 +327,22 @@ function initializeMap() {
 
     if (!detectiveMap) {
 
-        detectiveMap = L.map("map").setView(
-            [39.9208, 32.8541],
-            13
-        );
+        detectiveMap = L.map("map", {
+            maxBounds: [
+                [39.65, 32.45],
+                [40.15, 33.25]
+            ],
+            maxBoundsViscosity: 1.0,
+            minZoom: 10,
+            maxZoom: 19
+        }).setView([39.9208, 32.8541], 13);
 
         L.tileLayer(
             "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
             {
                 attribution: "&copy; OpenStreetMap contributors",
-                maxZoom: 19
+                maxZoom: 19,
+                noWrap : true
             }
         ).addTo(detectiveMap);
 
