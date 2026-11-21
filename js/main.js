@@ -30,7 +30,7 @@ const cases = [
         description:
             "Decode geographic patterns and coordinates to uncover a hidden meeting place.",
         difficulty: "Hard",
-        duration: 10,
+        duration: 6,
         icon: "🧭",
         image: "img/map.jpg"
     }
