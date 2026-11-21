@@ -52,9 +52,6 @@ Connect evidence nodes to matching candidates and identify the final location.
 - Six-minute countdown
 - Four progressive missions
 
-### Case 4 — City in Darkness
-A geographic mystery centered on a city-wide blackout.
-
 ## 🛠️ Technologies
 
 - **HTML5** — Page structure
